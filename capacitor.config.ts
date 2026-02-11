@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-	appId: "com.example.app",
-	appName: "remix-capacitor-template",
+	appId: "com.cap.app",
+	appName: "Pomodoro Plus",
 	webDir: "build/client",
 };
 
