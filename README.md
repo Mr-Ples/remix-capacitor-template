@@ -27,6 +27,14 @@ Use the build command to generate your web into `build/client` and also sync the
 npm run build
 ```
 
+Use this to run the app on your Android device:
+```
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export PATH=$JAVA_HOME/bin:$PATH
+unset ANDROID_SDK_ROOT # needed if you have multiple android sdks installed
+npx cap run android
+```
+
 Don't forget to change `capacitor.config.ts`
 
 For more information you can see the [Capacitor documentation](https://capacitorjs.com/docs/getting-started)
