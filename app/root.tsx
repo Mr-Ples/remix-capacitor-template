@@ -5,6 +5,11 @@ import {
   Scripts,
   ScrollRestoration,
 } from "@remix-run/react";
+import globalStyles from "./styles/global.css?url";
+
+export function links() {
+  return [{ rel: "stylesheet", href: globalStyles }];
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
