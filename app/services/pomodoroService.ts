@@ -24,6 +24,7 @@ export interface PomodoroServicePlugin {
     currentRound?: number;
     isWorkPhase?: boolean;
     phaseStartTimeMillis?: number;
+    phaseDurationSec?: number;
   }): Promise<void>;
 
   stopSession(): Promise<void>;

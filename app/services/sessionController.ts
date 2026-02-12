@@ -1,4 +1,4 @@
-import type { Profile, SessionState, SessionLog } from '../types/pomodoro';
+import type { Profile, SessionState } from '../types/pomodoro';
 import { Capacitor } from '@capacitor/core';
 import PomodoroService from './pomodoroService';
 import { StorageService } from './storage';
@@ -94,19 +94,19 @@ export class SessionController {
             roundLengthMinutes - remainingFirstRoundMinutes;
 
           // Determine current phase and how far into it we are
-          if (offsetWithinRoundMinutes < workMinutes || workMinutes === 0) {
+          if (offsetWithinRoundMinutes < workMinutes && workMinutes > 0) {
             // In work phase
             isWorkPhase = true;
             const offsetWithinWorkMinutes = Math.max(
               0,
               Math.min(offsetWithinRoundMinutes, workMinutes)
             );
-            const offsetWithinWorkSec = Math.round(
-              offsetWithinWorkMinutes * 60
-            );
-            phaseDurationSec = workMinutes * 60;
-            elapsedTimeSec = offsetWithinWorkSec;
-          } else {
+            // For a shortened first phase, calculate the actual remaining time
+            const remainingWorkMinutes = workMinutes - offsetWithinWorkMinutes;
+            phaseDurationSec = Math.round(remainingWorkMinutes * 60);
+            elapsedTimeSec = 0;  // Start from 0 since we're setting duration to remaining time
+            phaseStartTimeMillis = Date.now();
+          } else if (breakMinutes > 0) {
             // In break phase
             isWorkPhase = false;
             const offsetWithinBreakMinutes = Math.max(
@@ -116,14 +116,19 @@ export class SessionController {
                 breakMinutes
               )
             );
-            const offsetWithinBreakSec = Math.round(
-              offsetWithinBreakMinutes * 60
-            );
-            phaseDurationSec = breakMinutes * 60;
-            elapsedTimeSec = offsetWithinBreakSec;
+            // For a shortened first phase, calculate the actual remaining time
+            const remainingBreakMinutes = breakMinutes - offsetWithinBreakMinutes;
+            phaseDurationSec = Math.round(remainingBreakMinutes * 60);
+            elapsedTimeSec = 0;  // Start from 0 since we're setting duration to remaining time
+            phaseStartTimeMillis = Date.now();
+          } else {
+            // Edge case: work is 0 or we're past both phases somehow
+            // Default to work phase with no time elapsed
+            isWorkPhase = true;
+            phaseDurationSec = workMinutes * 60;
+            elapsedTimeSec = 0;
+            phaseStartTimeMillis = Date.now();
           }
-
-          phaseStartTimeMillis = Date.now() - elapsedTimeSec * 1000;
         }
       }
     }
@@ -153,6 +158,7 @@ export class SessionController {
         currentRound: this.state.currentRound,
         isWorkPhase,
         phaseStartTimeMillis: phaseStartTimeMillis,
+        phaseDurationSec: phaseDurationSec,
       });
     }
 
