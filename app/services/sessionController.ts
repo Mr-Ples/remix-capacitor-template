@@ -12,6 +12,15 @@ export interface SessionEvent {
 }
 
 export class SessionController {
+  private static instance: SessionController;
+
+  public static getInstance(): SessionController {
+    if (!SessionController.instance) {
+      SessionController.instance = new SessionController();
+    }
+    return SessionController.instance;
+  }
+
   private state: SessionState | null = null;
   private profile: Profile | null = null;
   private intervalId: number | null = null;
@@ -38,6 +47,10 @@ export class SessionController {
 
   addEventListener(listener: (event: SessionEvent) => void): () => void {
     this.listeners.add(listener);
+    // Immediately emit current state to new listener so UI syncs up
+    if (this.state) {
+      listener({ type: 'stateChange', state: this.state });
+    }
     return () => this.listeners.delete(listener);
   }
 
@@ -170,6 +183,17 @@ export class SessionController {
   }
 
   async resumeSession(): Promise<boolean> {
+    // If we already have an active session in memory, just return true
+    if (this.state && this.state.isActive) {
+      // Ensure timer is running just in case
+      if (!this.intervalId) {
+        this.startTimer();
+        this.startOngoingNotification();
+      }
+      this.emit({ type: 'stateChange', state: this.state });
+      return true;
+    }
+
     // On Android, use the native foreground service as the source of truth
     // so the notification countdown and JS state stay perfectly in sync.
     if (this.useNativeService) {
@@ -217,7 +241,7 @@ export class SessionController {
 
     const profiles = await StorageService.getProfiles();
     this.profile = profiles.find(p => p.id === savedState.profileId) || null;
-    
+
     if (!this.profile) {
       await StorageService.clearSessionState();
       return false;
@@ -226,7 +250,7 @@ export class SessionController {
     // Calculate elapsed time since last save
     const now = Date.now();
     const timeSinceLastSave = Math.floor((now - savedState.startTime) / 1000);
-    
+
     this.state = {
       ...savedState,
       elapsedTime: timeSinceLastSave,
@@ -236,7 +260,7 @@ export class SessionController {
     this.startTimer();
     this.startOngoingNotification();
     this.emit({ type: 'stateChange', state: this.state });
-    
+
     return true;
   }
 
@@ -248,7 +272,7 @@ export class SessionController {
       this.stopOngoingNotification();
       // Stop native foreground service when pausing on Android
       if (this.useNativeService) {
-        PomodoroService.stopSession().catch(() => {});
+        PomodoroService.stopSession().catch(() => { });
       }
       StorageService.saveSessionState(this.state);
       this.emit({ type: 'stateChange', state: this.state });
@@ -258,7 +282,7 @@ export class SessionController {
   async stopSession(): Promise<void> {
     // Stop native foreground service on Android
     if (this.useNativeService) {
-      await PomodoroService.stopSession().catch(() => {});
+      await PomodoroService.stopSession().catch(() => { });
     }
 
     this.stopTimer();
@@ -285,7 +309,7 @@ export class SessionController {
           phaseStartTimeMillis: this.state.startTime,
           phaseDurationSec: this.state.phaseDuration,
           activityTag: tag,
-        }).catch(() => {});
+        }).catch(() => { });
       }
       this.emit({ type: 'stateChange', state: this.state });
     }
@@ -358,70 +382,84 @@ export class SessionController {
     }
   }
 
+  dispose() {
+    this.stopTimer();
+    this.stopOngoingNotification();
+    this.listeners.clear();
+    this.removeNotificationListeners();
+  }
+
+  private isHandlingPhaseEnd = false;
+
   private async handlePhaseEnd() {
-    if (!this.state || !this.profile) return;
+    if (!this.state || !this.profile || this.isHandlingPhaseEnd) return;
+    this.isHandlingPhaseEnd = true;
 
-    // Vibrate to signal phase end
-    await NotificationService.vibratePattern();
+    try {
+      // Vibrate to signal phase end
+      await NotificationService.vibratePattern();
 
-    // Show notification
-    await NotificationService.schedulePhaseEndNotification(
-      this.state.isWorkPhase ? 'work' : 'break',
-      this.state.currentRound,
-      this.state.totalRounds,
-      this.state.currentActivityTag
-    );
+      // Show notification
+      await NotificationService.schedulePhaseEndNotification(
+        this.state.isWorkPhase ? 'work' : 'break',
+        this.state.currentRound,
+        this.state.totalRounds,
+        this.state.currentActivityTag
+      );
 
-    // Emit phase end event BEFORE updating state (UI will handle showing log dialog)
-    // This ensures the logging modal receives the correct completed round number
-    this.emit({ type: 'phaseEnd', state: this.state });
+      // Emit phase end event BEFORE updating state (UI will handle showing log dialog)
+      // This ensures the logging modal receives the correct completed round number
+      this.emit({ type: 'phaseEnd', state: this.state });
 
-    // Move to next phase
-    if (this.state.isWorkPhase) {
-      // Work phase ended
-      if (this.profile.breakDuration === 0) {
-        // No break, move directly to next round
+      // Move to next phase
+      if (this.state.isWorkPhase) {
+        // Work phase ended
+        if (this.profile.breakDuration === 0) {
+          // No break, move directly to next round
+          if (this.state.currentRound >= this.state.totalRounds) {
+            // Session complete
+            this.emit({ type: 'sessionEnd', state: this.state });
+            await this.stopSession();
+            return;
+          } else {
+            // Start next round immediately
+            this.state.currentRound++;
+            this.state.isWorkPhase = true;
+            this.state.phaseDuration = this.profile.workDuration * 60;
+            this.state.elapsedTime = 0;
+            this.state.startTime = Date.now();
+          }
+        } else {
+          // Start break phase
+          this.state.isWorkPhase = false;
+          this.state.phaseDuration = this.profile.breakDuration * 60;
+          this.state.elapsedTime = 0;
+          this.state.startTime = Date.now();
+        }
+      } else {
+        // Break phase ended, move to next round or end session
         if (this.state.currentRound >= this.state.totalRounds) {
           // Session complete
           this.emit({ type: 'sessionEnd', state: this.state });
           await this.stopSession();
           return;
         } else {
-          // Start next round immediately
+          // Start next round
           this.state.currentRound++;
           this.state.isWorkPhase = true;
           this.state.phaseDuration = this.profile.workDuration * 60;
           this.state.elapsedTime = 0;
           this.state.startTime = Date.now();
         }
-      } else {
-        // Start break phase
-        this.state.isWorkPhase = false;
-        this.state.phaseDuration = this.profile.breakDuration * 60;
-        this.state.elapsedTime = 0;
-        this.state.startTime = Date.now();
       }
-    } else {
-      // Break phase ended, move to next round or end session
-      if (this.state.currentRound >= this.state.totalRounds) {
-        // Session complete
-        this.emit({ type: 'sessionEnd', state: this.state });
-        await this.stopSession();
-        return;
-      } else {
-        // Start next round
-        this.state.currentRound++;
-        this.state.isWorkPhase = true;
-        this.state.phaseDuration = this.profile.workDuration * 60;
-        this.state.elapsedTime = 0;
-        this.state.startTime = Date.now();
-      }
-    }
 
-    await StorageService.saveSessionState(this.state);
-    this.emit({ type: 'stateChange', state: this.state });
-    this.stopOngoingNotification();
-    this.startOngoingNotification();
+      await StorageService.saveSessionState(this.state);
+      this.emit({ type: 'stateChange', state: this.state });
+      this.stopOngoingNotification();
+      this.startOngoingNotification();
+    } finally {
+      this.isHandlingPhaseEnd = false;
+    }
   }
 
   getTimeRemaining(): number {

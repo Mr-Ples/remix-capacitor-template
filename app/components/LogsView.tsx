@@ -26,22 +26,22 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
     setLoading(true);
     const loadedLogs = await StorageService.getSessionLogs();
     const loadedProfiles = await StorageService.getProfiles();
-    
+
     // Sort logs by date, most recent first
-    loadedLogs.sort((a, b) => 
+    loadedLogs.sort((a, b) =>
       new Date(b.phaseEndTime).getTime() - new Date(a.phaseEndTime).getTime()
     );
-    
+
     setLogs(loadedLogs);
     setProfiles(loadedProfiles);
     setLoading(false);
   };
 
   const handleClearLogs = async () => {
-    if (confirm('Are you sure you want to clear all logs? This cannot be undone.')) {
-      await StorageService.clearSessionLogs();
-      await loadLogs();
-    }
+    // if (confirm('Are you sure you want to clear all logs? This cannot be undone.')) {
+    await StorageService.clearSessionLogs();
+    await loadLogs();
+    // }
   };
 
   const getProfileName = (profileId: string): string => {
@@ -64,7 +64,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
   const handleExportLogs = async () => {
     const logsToExport = getFilteredLogs();
     if (logsToExport.length === 0) {
-      alert('No logs to export for the selected profile.');
+      console.warn('No logs to export for the selected profile.');
       return;
     }
 
@@ -72,7 +72,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
       await exportLogs(logsToExport);
     } catch (error) {
       console.error('Error exporting logs', error);
-      alert('Failed to export logs. Please try again.');
+      console.error('Failed to export logs. Please try again.');
     }
   };
 
@@ -96,14 +96,14 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
   };
 
   const handleDeleteLog = async (logId: string) => {
-    if (confirm('Are you sure you want to delete this log entry?')) {
-      const updatedLogs = logs.filter(log => log.id !== logId);
-      await StorageService.clearSessionLogs();
-      for (const log of updatedLogs) {
-        await StorageService.addSessionLog(log);
-      }
-      await loadLogs();
+    // if (confirm('Are you sure you want to delete this log entry?')) {
+    const updatedLogs = logs.filter(log => log.id !== logId);
+    await StorageService.clearSessionLogs();
+    for (const log of updatedLogs) {
+      await StorageService.addSessionLog(log);
     }
+    await loadLogs();
+    // }
   };
 
   if (!isOpen) return null;
@@ -123,16 +123,16 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
   };
 
   return (
-    <div 
-      className="modal-overlay" 
+    <div
+      className="modal-overlay"
       onClick={handleOverlayClick}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={-1}
       aria-label="Close modal"
     >
-      <div 
-        className="modal" 
+      <div
+        className="modal"
         style={{ maxWidth: '800px', maxHeight: '90vh', overflow: 'auto' }}
         role="dialog"
         aria-labelledby="logs-view-title"
@@ -194,15 +194,15 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
             {filteredLogs.map((log) => {
               const isEditing = editingLogId === log.id;
               const profile = profiles.find(p => p.id === log.profileId);
-              
+
               return (
                 <div key={log.id} className="card" style={{ marginBottom: 0 }}>
                   {isEditing && editFormData ? (
                     // Edit Mode
                     <div>
-                      <div style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
                         alignItems: 'flex-start',
                         marginBottom: '16px'
                       }}>
@@ -260,7 +260,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                           </div>
                           {profile.questions.map((question) => {
                             const currentAnswer = editFormData.answers[question.id] || '';
-                            
+
                             return (
                               <div key={question.id} className="input-group mb-2">
                                 <label className="label" style={{ fontSize: '13px' }} htmlFor={`edit-answer-${log.id}-${question.id}`}>
@@ -301,9 +301,9 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                   ) : (
                     // View Mode
                     <div>
-                      <div style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
                         alignItems: 'flex-start',
                         marginBottom: '12px'
                       }}>
@@ -311,7 +311,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                           <div style={{ fontWeight: '600', fontSize: '16px', marginBottom: '4px' }}>
                             {log.phaseType === 'work' ? 'Work Phase' : 'Break Phase'} - Round {log.roundNumber}
                             {log.activityTag && (
-                              <span style={{ 
+                              <span style={{
                                 marginLeft: '8px',
                                 padding: '2px 8px',
                                 backgroundColor: 'var(--primary-color)',
@@ -338,8 +338,8 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                           <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
                             Notes:
                           </div>
-                          <div style={{ 
-                            fontSize: '14px', 
+                          <div style={{
+                            fontSize: '14px',
                             color: 'var(--text-secondary)',
                             whiteSpace: 'pre-wrap'
                           }}>
@@ -357,11 +357,11 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                             {Object.entries(log.answers).map(([questionId, answer]) => {
                               const question = profile?.questions.find(q => q.id === questionId);
                               const questionText = question?.text || `Question ${questionId}`;
-                              
+
                               return (
-                                <div 
+                                <div
                                   key={questionId}
-                                  style={{ 
+                                  style={{
                                     fontSize: '13px',
                                     display: 'flex',
                                     gap: '8px'
@@ -382,14 +382,14 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
 
                       {/* Action Buttons */}
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '12px' }}>
-                        <button 
+                        <button
                           className="btn btn-secondary"
                           onClick={() => handleEditLog(log)}
                           style={{ fontSize: '13px', padding: '4px 12px' }}
                         >
                           Edit
                         </button>
-                        <button 
+                        <button
                           className="btn btn-danger"
                           onClick={() => handleDeleteLog(log.id)}
                           style={{ fontSize: '13px', padding: '4px 12px' }}

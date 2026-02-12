@@ -86,21 +86,21 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const handleDeleteProfile = async (profileId: string) => {
     if (profiles.length <= 1) {
-      alert('Cannot delete the last profile');
+      console.error('Cannot delete the last profile');
       return;
     }
 
-    if (confirm('Are you sure you want to delete this profile?')) {
-      await StorageService.deleteProfile(profileId);
-      await loadProfiles();
+    // if (confirm('Are you sure you want to delete this profile?')) {
+    await StorageService.deleteProfile(profileId);
+    await loadProfiles();
 
-      if (currentProfile.id === profileId) {
-        const remaining = profiles.filter(p => p.id !== profileId);
-        if (remaining.length > 0) {
-          onProfileChange(remaining[0]);
-        }
+    if (currentProfile.id === profileId) {
+      const remaining = profiles.filter(p => p.id !== profileId);
+      if (remaining.length > 0) {
+        onProfileChange(remaining[0]);
       }
     }
+    // }
   };
 
   const addQuestion = () => {
@@ -340,19 +340,44 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
                     <label style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>Goal:</label>
                     <input
-                      type="number"
+                      type="text"
                       className="input"
                       style={{ padding: '6px 8px', minWidth: '60px' }}
                       value={editingProfile.goals?.[tag] || ''}
                       placeholder="-"
-                      min="0"
                       onChange={(e) => {
-                        const val = parseInt(e.target.value);
+                        const valStr = e.target.value;
                         const newGoals = { ...(editingProfile.goals || {}) };
-                        if (isNaN(val) || val <= 0) {
+
+                        // Check if it's a percentage format (e.g. "50%")
+                        const isPercentage = valStr.trim().endsWith('%');
+                        const numVal = parseInt(valStr.replace('%', ''));
+
+                        if (!valStr.trim()) {
                           delete newGoals[tag];
+                        } else if (isPercentage && !isNaN(numVal)) {
+                          newGoals[tag] = `${numVal}%`;
+                        } else if (!isNaN(numVal) && numVal > 0) {
+                          newGoals[tag] = numVal;
                         } else {
-                          newGoals[tag] = val;
+                          // Allow typing partial input, but don't save invalid states if strict? 
+                          // Actually better to just save as string if it looks like they are typing a %
+                          // For now, let's keep it simple: if it parses as int, save int. 
+                          // If it ends with %, save as string.
+                          // logic above handles these cases.
+                          // What if user types "50" then "%"? 
+                          // The above logic: "50" -> 50. "50%" -> "50%".
+                          // "50% " -> "50%".
+
+                          // If completely invalid (e.g. "abc"), maybe don't update? 
+                          // Or let them type and validate on blur?
+                          // React controlled input needs to update state.
+                          // Let's store whatever they type as string if it doesn't parse cleanly to number, 
+                          // but we need to satisfy the type.
+                          // The type is number | string.
+
+                          // Let's just store the string if it's not a pure number
+                          newGoals[tag] = valStr;
                         }
                         setEditingProfile({ ...editingProfile, goals: newGoals });
                       }}

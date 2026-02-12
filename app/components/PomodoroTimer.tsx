@@ -17,36 +17,16 @@ export function PomodoroTimer() {
   const [loggingPhaseType, setLoggingPhaseType] = useState<'work' | 'break'>('work');
   const [loggingRoundNumber, setLoggingRoundNumber] = useState<number>(1);
   const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
+  const [currentLogId, setCurrentLogId] = useState<string | null>(null);
   const controllerRef = useRef<SessionController | null>(null);
 
   const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
 
   useEffect(() => {
-    initializeApp();
-    loadSessionLogs();
-    return () => {
-      if (controllerRef.current) {
-        controllerRef.current.removeNotificationListeners();
-      }
-    };
-  }, []);
-
-  const loadSessionLogs = async () => {
-    const logs = await StorageService.getSessionLogs();
-    setSessionLogs(logs);
-  };
-
-  const initializeApp = async () => {
-    // Load active profile
-    const activeProfile = await StorageService.getActiveProfile();
-    setProfile(activeProfile);
-
-    // Initialize session controller
-    const controller = new SessionController();
+    const controller = SessionController.getInstance();
     controllerRef.current = controller;
 
-    // Set up event listeners
-    controller.addEventListener((event) => {
+    const cleanupListener = controller.addEventListener((event) => {
       if (event.type === 'tick' || event.type === 'stateChange') {
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
@@ -54,11 +34,29 @@ export function PomodoroTimer() {
         // Capture the completed round number before state transitions
         setLoggingRoundNumber(event.state.currentRound);
         setLoggingPhaseType(event.state.isWorkPhase ? 'work' : 'break');
+
+        // AUTO-SAVE LOG
+        const newLogId = Date.now().toString();
+        const autoLog: SessionLog = {
+          id: newLogId,
+          profileId: event.state.profileId,
+          sessionStartTime: new Date(event.state.startTime).toISOString(),
+          roundNumber: event.state.currentRound,
+          phaseType: event.state.isWorkPhase ? 'work' : 'break',
+          phaseEndTime: new Date().toISOString(),
+          notes: '',
+          answers: {},
+          activityTag: event.state.currentActivityTag,
+        };
+
+        StorageService.addSessionLog(autoLog).then(async () => {
+          setCurrentLogId(newLogId);
+          await loadSessionLogs();
+        });
+
         setShowLoggingModal(true);
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
-        // Reload logs when a phase ends (in case background service logged it)
-        loadSessionLogs();
       } else if (event.type === 'sessionEnd') {
         alert('Session Complete! Great work!');
         setSessionState(null);
@@ -67,34 +65,69 @@ export function PomodoroTimer() {
       }
     });
 
-    // Try to resume existing session
-    const resumed = await controller.resumeSession();
-    if (resumed) {
-      const state = controller.getCurrentState();
-      const resumedProfile = controller.getCurrentProfile();
-      if (state && resumedProfile) {
-        setSessionState(state);
-        setProfile(resumedProfile);
-        setTimeRemaining(controller.getTimeRemaining());
-        setSelectedActivityTag(state.currentActivityTag || '');
-      }
+    const init = async () => {
+      // Load active profile
+      const activeProfile = await StorageService.getActiveProfile();
+      setProfile(activeProfile);
 
-      // On Android, if a phase completed while the app was closed,
-      // the native foreground service may have a pending log entry.
-      // Check for it and show the logging modal accordingly.
-      if (Capacitor.getPlatform() === 'android') {
-        try {
-          const nativeState = await PomodoroService.getSessionState();
-          if (nativeState.pendingLog) {
-            setLoggingRoundNumber(nativeState.pendingLog.roundNumber);
-            setLoggingPhaseType(nativeState.pendingLog.phaseType as 'work' | 'break');
-            setShowLoggingModal(true);
+      // Try to resume existing session
+      const resumed = await controller.resumeSession();
+      if (resumed) {
+        const state = controller.getCurrentState();
+        const resumedProfile = controller.getCurrentProfile();
+        if (state && resumedProfile) {
+          setSessionState(state);
+          setProfile(resumedProfile);
+          setTimeRemaining(controller.getTimeRemaining());
+          setSelectedActivityTag(state.currentActivityTag || '');
+        }
+
+        // On Android, check for pending logs
+        if (Capacitor.getPlatform() === 'android') {
+          try {
+            const nativeState = await PomodoroService.getSessionState();
+            if (nativeState.pendingLog) {
+              setLoggingRoundNumber(nativeState.pendingLog.roundNumber);
+              setLoggingPhaseType(nativeState.pendingLog.phaseType as 'work' | 'break');
+
+              // Check/create log logic (simplified)
+              const existingLogs = await StorageService.getSessionLogs();
+              // This part of logic is a bit duplicated but executed only on resume
+              const newLogId = Date.now().toString();
+              const autoLog: SessionLog = {
+                id: newLogId,
+                profileId: nativeState.profileId || resumedProfile?.id || 'unknown',
+                sessionStartTime: new Date().toISOString(),
+                roundNumber: nativeState.pendingLog.roundNumber,
+                phaseType: nativeState.pendingLog.phaseType as 'work' | 'break',
+                phaseEndTime: new Date().toISOString(),
+                notes: '',
+                answers: {},
+                activityTag: nativeState.activityTag,
+              };
+
+              await StorageService.addSessionLog(autoLog);
+              setCurrentLogId(newLogId);
+              setShowLoggingModal(true);
+            }
+          } catch (e) {
+            console.error('Error checking native pending log', e);
           }
-        } catch (e) {
-          console.error('Error checking native pending log', e);
         }
       }
-    }
+    };
+
+    init();
+    loadSessionLogs();
+
+    return () => {
+      cleanupListener();
+    };
+  }, []);
+
+  const loadSessionLogs = async () => {
+    const logs = await StorageService.getSessionLogs();
+    setSessionLogs(logs);
   };
 
   const handleStartSession = async () => {
@@ -116,29 +149,48 @@ export function PomodoroTimer() {
 
   const handleStopSession = async () => {
     if (!controllerRef.current) return;
-    if (confirm('Are you sure you want to stop the session?')) {
-      await controllerRef.current.stopSession();
-      setSessionState(null);
-      setTimeRemaining(0);
-    }
+    // if (confirm('Are you sure you want to stop the session?')) {
+    await controllerRef.current.stopSession();
+    setSessionState(null);
+    setTimeRemaining(0);
+    // }
   };
 
   const handleLogSubmit = async (notes: string, answers: Record<string, string>, activityTag?: string) => {
-    if (!sessionState || !profile) return;
+    if (!profile) return;
 
-    const log: SessionLog = {
-      id: Date.now().toString(),
-      profileId: profile.id,
-      sessionStartTime: new Date(sessionState.startTime).toISOString(),
-      roundNumber: loggingRoundNumber,
-      phaseType: loggingPhaseType,
-      phaseEndTime: new Date().toISOString(),
-      notes,
-      answers,
-      activityTag,
-    };
+    if (currentLogId) {
+      // UPDATE existing auto-saved log
+      const logs = await StorageService.getSessionLogs();
+      const existingLog = logs.find(l => l.id === currentLogId);
 
-    await StorageService.addSessionLog(log);
+      if (existingLog) {
+        const updatedLog: SessionLog = {
+          ...existingLog,
+          notes,
+          answers,
+          activityTag: activityTag || existingLog.activityTag,
+        };
+        await StorageService.updateSessionLog(updatedLog);
+      }
+    } else {
+      // Fallback: create new if for some reason currentLogId is missing (legacy flow)
+      // This shouldn't happen with new flow but good for safety
+      if (!sessionState) return;
+      const log: SessionLog = {
+        id: Date.now().toString(),
+        profileId: profile.id,
+        sessionStartTime: new Date(sessionState.startTime).toISOString(),
+        roundNumber: loggingRoundNumber,
+        phaseType: loggingPhaseType,
+        phaseEndTime: new Date().toISOString(),
+        notes,
+        answers,
+        activityTag,
+      };
+      await StorageService.addSessionLog(log);
+    }
+
     await loadSessionLogs(); // Refresh logs
 
     // Clear any native pending log marker on Android so we don't
@@ -151,6 +203,7 @@ export function PomodoroTimer() {
       }
     }
     setShowLoggingModal(false);
+    setCurrentLogId(null);
   };
 
   const handleProfileChange = (newProfile: Profile) => {
@@ -173,10 +226,52 @@ export function PomodoroTimer() {
     const today = new Date().toDateString();
     return sessionLogs.filter(log => {
       const logDate = new Date(log.phaseEndTime).toDateString();
-      // Count work phases that match the tag
       return log.phaseType === 'work' && log.activityTag === tag && logDate === today;
     }).length;
   };
+
+  const getReferenceTotalRounds = (): number => {
+    if (sessionState) return sessionState.totalRounds;
+    if (!profile) return 0;
+
+    if (profile.useEndTime && profile.endTime) {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+      const [endHourStr, endMinStr] = profile.endTime.split(':');
+      const endHour = parseInt(endHourStr || '0', 10);
+      const endMinute = parseInt(endMinStr || '0', 10);
+      const endMinutes = endHour * 60 + endMinute;
+
+      const minutesUntilEnd = endMinutes - nowMinutes;
+      const roundLengthMinutes = profile.workDuration + profile.breakDuration;
+
+      if (minutesUntilEnd > 0 && roundLengthMinutes > 0) {
+        return Math.ceil(minutesUntilEnd / roundLengthMinutes);
+      }
+      return 0;
+    }
+
+    return profile.rounds;
+  };
+
+  const resolveGoalTarget = (goal: number | string | undefined): number => {
+    if (goal === undefined || goal === '') return 0;
+    if (typeof goal === 'number') return goal;
+
+    // Handle percentage string "50%"
+    if (typeof goal === 'string' && goal.endsWith('%')) {
+      const percentage = parseInt(goal.replace('%', ''));
+      if (!isNaN(percentage)) {
+        const total = getReferenceTotalRounds();
+        return Math.max(1, Math.ceil((percentage / 100) * total));
+      }
+    }
+
+    const parsed = parseInt(goal);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
 
   const renderGoalProgress = (tag: string | undefined) => {
     if (!tag) return null;
@@ -192,11 +287,33 @@ export function PomodoroTimer() {
     }
 
     const completed = getCompletedRoundsForTag(tag);
-    const isMet = completed >= target;
+    // Resolve target (handles numbers and "50%" strings)
+    const targetVal = resolveGoalTarget(profile?.goals?.[tag]);
+
+    if (!targetVal) {
+      // If we have a goal set but it resolves to 0 (e.g. invalid string), treat as no goal?
+      // Or if it's 0 because total rounds is 0 (outside of hours)?
+      // Let's show the raw string if we can't resolve it, or just hide?
+      // If profile.goals[tag] exists but targetVal is 0, let's show "0".
+      if (!profile?.goals?.[tag]) {
+        return (
+          <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No daily goal set
+          </div>
+        );
+      }
+    }
+
+    const isMet = completed >= targetVal;
+
+    // If original goal was a percentage, show it in parens?
+    const originalGoal = profile?.goals?.[tag];
+    const isPercentage = typeof originalGoal === 'string' && originalGoal.endsWith('%');
 
     return (
       <div style={{ marginTop: '4px', fontSize: '13px', color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
-        Daily Goal: <strong>{completed} / {target}</strong> rounds {isMet && '✓'}
+        Daily Goal: <strong>{completed} / {targetVal}</strong> rounds {isMet && '✓'}
+        {isPercentage && <span style={{ opacity: 0.7, marginLeft: '4px' }}>({originalGoal})</span>}
       </div>
     );
   };
@@ -367,7 +484,10 @@ export function PomodoroTimer() {
       {showLoggingModal && sessionState && (
         <LoggingModal
           isOpen={showLoggingModal}
-          onClose={() => setShowLoggingModal(false)}
+          onClose={() => {
+            setShowLoggingModal(false);
+            setCurrentLogId(null);
+          }}
           onSubmit={handleLogSubmit}
           profile={profile}
           phaseType={loggingPhaseType}
@@ -387,10 +507,14 @@ export function PomodoroTimer() {
         <div className="card mt-4">
           <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>Daily Goals</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {Object.entries(profile.goals).map(([tag, target]) => {
+            {Object.entries(profile.goals || {}).map(([tag, rawTarget]) => {
               const completed = getCompletedRoundsForTag(tag);
-              const percent = Math.min(100, (completed / target) * 100);
+              const target = resolveGoalTarget(rawTarget);
+
+              // Avoid division by zero
+              const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
               const isMet = completed >= target;
+              const isPercentage = typeof rawTarget === 'string' && rawTarget.endsWith('%');
 
               return (
                 <div key={tag}>
@@ -398,6 +522,7 @@ export function PomodoroTimer() {
                     <span style={{ fontWeight: '500' }}>{tag}</span>
                     <span style={{ color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
                       {completed} / {target} {isMet && '✓'}
+                      {isPercentage && <span style={{ opacity: 0.7, marginLeft: '4px' }}>({rawTarget})</span>}
                     </span>
                   </div>
                   <div style={{

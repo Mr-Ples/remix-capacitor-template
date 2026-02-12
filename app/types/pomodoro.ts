@@ -27,7 +27,7 @@ export interface Profile {
    * Target number of rounds for specific activity tags.
    * Key is the tag name, value is the target number of rounds.
    */
-  goals?: Record<string, number>;
+  goals?: Record<string, number | string>;
   questions: Question[];
   createdAt: string;
   updatedAt: string;
