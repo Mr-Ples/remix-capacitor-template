@@ -230,7 +230,7 @@ export function PomodoroTimer() {
     const today = new Date().toDateString();
     return sessionLogs.filter(log => {
       const logDate = new Date(log.phaseEndTime).toDateString();
-      return log.phaseType === 'work' && log.activityTag === tag && logDate === today;
+      return log.activityTag === tag && logDate === today;
     }).length;
   };
 

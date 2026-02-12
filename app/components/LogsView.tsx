@@ -229,28 +229,15 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Phase</label>
-                  <select
-                    className="input-field w-full h-9 text-xs"
-                    value={newEntryData.phaseType}
-                    onChange={(e) => setNewEntryData({ ...newEntryData, phaseType: e.target.value as 'work' | 'break', answers: {} })}
-                  >
-                    <option value="work">Work</option>
-                    <option value="break">Break</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Round</label>
-                  <input
-                    type="number"
-                    className="input-field w-full h-9 text-xs text-right"
-                    min="1"
-                    value={newEntryData.roundNumber}
-                    onChange={(e) => setNewEntryData({ ...newEntryData, roundNumber: parseInt(e.target.value) || 1 })}
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Round</label>
+                <input
+                  type="number"
+                  className="input-field w-full h-9 text-xs text-right"
+                  min="1"
+                  value={newEntryData.roundNumber}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, roundNumber: parseInt(e.target.value) || 1 })}
+                />
               </div>
 
               <div className="space-y-1">
@@ -265,7 +252,7 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
 
               {newEntryData.profileId && (() => {
                 const profile = profiles.find(p => p.id === newEntryData.profileId);
-                const relevantQuestions = profile?.questions.filter(q => q.type === newEntryData.phaseType || q.type === 'both');
+                const relevantQuestions = profile?.questions;
                 if (!relevantQuestions || relevantQuestions.length === 0) return null;
 
                 return (
@@ -321,7 +308,7 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                     {isEditing && editFormData ? (
                       <div className="space-y-4">
                         <div className="flex justify-between items-center text-xs text-mutedForeground">
-                          <span>Editing Round {log.roundNumber} - {log.phaseType}</span>
+                          <span>Editing Round {log.roundNumber}</span>
                           <div className="flex gap-4">
                             <button onClick={() => setEditingLogId(null)} className="text-mutedForeground hover:text-foreground">Cancel</button>
                             <button onClick={handleSaveEdit} className="text-accent font-bold">Save Changes</button>
@@ -337,12 +324,11 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                           />
                         </div>
 
-                        {profile && profile.questions.filter(q => q.type === log.phaseType || q.type === 'both').length > 0 && (
+                        {profile && profile.questions.length > 0 && (
                           <div className="space-y-4 pt-2 border-t border-white/5">
                             <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Follow-up Questions</label>
                             <div className="space-y-4">
                               {profile.questions
-                                .filter(q => q.type === log.phaseType || q.type === 'both')
                                 .map(q => (
                                   <div key={q.id} className="space-y-2">
                                     <p className="text-xs font-medium text-foreground/90">{q.text}</p>
@@ -371,9 +357,6 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                         <div className="flex justify-between items-start">
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider ${log.phaseType === 'work' ? 'bg-accent/20 text-accent' : 'bg-green-500/20 text-green-400'}`}>
-                                {log.phaseType}
-                              </span>
                               <span className="text-sm font-medium">Round {log.roundNumber}</span>
                               {log.activityTag && (
                                 <span className="text-[10px] text-mutedForeground bg-white/5 px-1.5 py-0.5 rounded border border-white/5">

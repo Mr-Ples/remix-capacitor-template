@@ -28,9 +28,7 @@ export function LoggingModal({
 
   if (!isOpen) return null;
 
-  const relevantQuestions = profile.questions.filter(
-    q => q.type === phaseType || q.type === 'both'
-  );
+  const relevantQuestions = profile.questions;
 
   const handleSubmit = () => {
     onSubmit(notes, answers, activityTag || undefined);
@@ -47,7 +45,7 @@ export function LoggingModal({
         <div className="p-6 sm:p-8 space-y-6 max-h-[90vh] overflow-y-auto">
           <div className="space-y-1">
             <h2 className="text-xl font-display font-bold">
-              {phaseType === 'work' ? 'Work Phase Complete' : 'Break Complete'}
+              Round Complete
             </h2>
             <p className="text-sm text-mutedForeground">
               Round <span className="text-foreground">{roundNumber}</span> of {totalRounds}
@@ -91,8 +89,8 @@ export function LoggingModal({
                     <button
                       key={option}
                       className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200 ${answers[question.id] === option
-                          ? 'border-accent bg-accent/10 text-accent'
-                          : 'border-white/5 bg-white/5 text-mutedForeground hover:bg-white/10'
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-white/5 bg-white/5 text-mutedForeground hover:bg-white/10'
                         }`}
                       onClick={() => setAnswers({ ...answers, [question.id]: option })}
                     >
