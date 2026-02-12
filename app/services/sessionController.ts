@@ -45,7 +45,7 @@ export class SessionController {
     this.listeners.forEach(listener => listener(event));
   }
 
-  async startSession(profile: Profile): Promise<void> {
+  async startSession(profile: Profile, activityTag?: string): Promise<void> {
     this.profile = profile;
 
     const now = new Date();
@@ -142,6 +142,7 @@ export class SessionController {
       elapsedTime: elapsedTimeSec,
       phaseDuration: phaseDurationSec,
       isActive: true,
+      currentActivityTag: activityTag,
     };
 
     await StorageService.saveSessionState(this.state);
@@ -159,6 +160,7 @@ export class SessionController {
         isWorkPhase,
         phaseStartTimeMillis: phaseStartTimeMillis,
         phaseDurationSec: phaseDurationSec,
+        activityTag,
       });
     }
 
@@ -196,6 +198,7 @@ export class SessionController {
           elapsedTime,
           phaseDuration: phaseDurationSec,
           isActive: true,
+          currentActivityTag: nativeState.activityTag,
         };
 
         await NotificationService.initialize();
@@ -266,6 +269,28 @@ export class SessionController {
     this.profile = null;
   }
 
+  setActivityTag(tag?: string): void {
+    if (this.state) {
+      this.state.currentActivityTag = tag;
+      StorageService.saveSessionState(this.state);
+      // Update the native service with the new tag
+      if (this.useNativeService && this.profile) {
+        PomodoroService.startSession({
+          workDurationMin: this.profile.workDuration,
+          breakDurationMin: this.profile.breakDuration,
+          totalRounds: this.state.totalRounds,
+          profileId: this.profile.id,
+          currentRound: this.state.currentRound,
+          isWorkPhase: this.state.isWorkPhase,
+          phaseStartTimeMillis: this.state.startTime,
+          phaseDurationSec: this.state.phaseDuration,
+          activityTag: tag,
+        }).catch(() => {});
+      }
+      this.emit({ type: 'stateChange', state: this.state });
+    }
+  }
+
   private startTimer() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
@@ -307,7 +332,8 @@ export class SessionController {
           this.formatTime(remaining),
           this.state.currentRound,
           this.state.totalRounds,
-          this.state.isWorkPhase ? 'work' : 'break'
+          this.state.isWorkPhase ? 'work' : 'break',
+          this.state.currentActivityTag
         );
       }
     }, 1000);
@@ -319,7 +345,8 @@ export class SessionController {
         this.formatTime(remaining),
         this.state.currentRound,
         this.state.totalRounds,
-        this.state.isWorkPhase ? 'work' : 'break'
+        this.state.isWorkPhase ? 'work' : 'break',
+        this.state.currentActivityTag
       );
     }
   }
@@ -341,7 +368,8 @@ export class SessionController {
     await NotificationService.schedulePhaseEndNotification(
       this.state.isWorkPhase ? 'work' : 'break',
       this.state.currentRound,
-      this.state.totalRounds
+      this.state.totalRounds,
+      this.state.currentActivityTag
     );
 
     // Emit phase end event (UI will handle showing log dialog)

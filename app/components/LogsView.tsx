@@ -155,6 +155,19 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                   <div>
                     <div style={{ fontWeight: '600', fontSize: '16px', marginBottom: '4px' }}>
                       {log.phaseType === 'work' ? 'Work Phase' : 'Break Phase'} - Round {log.roundNumber}
+                      {log.activityTag && (
+                        <span style={{ 
+                          marginLeft: '8px',
+                          padding: '2px 8px',
+                          backgroundColor: 'var(--primary-color)',
+                          color: 'white',
+                          borderRadius: '4px',
+                          fontSize: '14px',
+                          fontWeight: '500'
+                        }}>
+                          {log.activityTag}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
                       {getProfileName(log.profileId)}

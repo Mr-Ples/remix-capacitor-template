@@ -9,6 +9,7 @@ export interface PomodoroSessionState {
   phaseEndTimeMillis?: number;
   timeRemainingSec?: number;
   phaseDurationSec?: number;
+  activityTag?: string;
   pendingLog?: {
     roundNumber: number;
     phaseType: string;
@@ -25,6 +26,7 @@ export interface PomodoroServicePlugin {
     isWorkPhase?: boolean;
     phaseStartTimeMillis?: number;
     phaseDurationSec?: number;
+    activityTag?: string;
   }): Promise<void>;
 
   stopSession(): Promise<void>;

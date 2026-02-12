@@ -27,7 +27,8 @@ export class NotificationService {
   static async schedulePhaseEndNotification(
     phaseType: 'work' | 'break',
     roundNumber: number,
-    totalRounds: number
+    totalRounds: number,
+    activityTag?: string
   ): Promise<void> {
     try {
       await this.initialize();
@@ -39,7 +40,11 @@ export class NotificationService {
       }
 
       const title = phaseType === 'work' ? 'Work Phase Complete!' : 'Break Phase Complete!';
-      const body = `Round ${roundNumber}/${totalRounds} - Tap to log your progress`;
+      let body = `Round ${roundNumber}/${totalRounds}`;
+      if (activityTag) {
+        body += ` - ${activityTag}`;
+      }
+      body += ' - Tap to log your progress';
 
       await LocalNotifications.schedule({
         notifications: [
@@ -68,12 +73,16 @@ export class NotificationService {
     timeRemaining: string,
     roundNumber: number,
     totalRounds: number,
-    phaseType: 'work' | 'break'
+    phaseType: 'work' | 'break',
+    activityTag?: string
   ): Promise<void> {
     try {
       await this.initialize();
 
-      const phase = phaseType === 'work' ? 'Work Session' : 'Break Time';
+      let phase = phaseType === 'work' ? 'Work Session' : 'Break Time';
+      if (activityTag) {
+        phase += ` - ${activityTag}`;
+      }
 
       // On Android, the native PomodoroForegroundService owns the persistent
       // countdown notification, so this becomes a no-op to avoid conflicts.

@@ -15,6 +15,7 @@ export function PomodoroTimer() {
   const [showLoggingModal, setShowLoggingModal] = useState(false);
   const [showLogsView, setShowLogsView] = useState(false);
   const [loggingPhaseType, setLoggingPhaseType] = useState<'work' | 'break'>('work');
+  const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
   const controllerRef = useRef<SessionController | null>(null);
 
   useEffect(() => {
@@ -61,6 +62,7 @@ export function PomodoroTimer() {
         setSessionState(state);
         setProfile(resumedProfile);
         setTimeRemaining(controller.getTimeRemaining());
+        setSelectedActivityTag(state.currentActivityTag || '');
       }
 
       // On Android, if a phase completed while the app was closed,
@@ -82,7 +84,14 @@ export function PomodoroTimer() {
 
   const handleStartSession = async () => {
     if (!profile || !controllerRef.current) return;
-    await controllerRef.current.startSession(profile);
+    await controllerRef.current.startSession(profile, selectedActivityTag || undefined);
+  };
+
+  const handleActivityTagChange = (tag: string) => {
+    setSelectedActivityTag(tag);
+    if (controllerRef.current && sessionState) {
+      controllerRef.current.setActivityTag(tag || undefined);
+    }
   };
 
   const handlePauseSession = () => {
@@ -99,7 +108,7 @@ export function PomodoroTimer() {
     }
   };
 
-  const handleLogSubmit = async (notes: string, answers: Record<string, string>) => {
+  const handleLogSubmit = async (notes: string, answers: Record<string, string>, activityTag?: string) => {
     if (!sessionState || !profile) return;
 
     const log: SessionLog = {
@@ -111,6 +120,7 @@ export function PomodoroTimer() {
       phaseEndTime: new Date().toISOString(),
       notes,
       answers,
+      activityTag,
     };
 
     await StorageService.addSessionLog(log);
@@ -188,7 +198,7 @@ export function PomodoroTimer() {
                 backgroundColor: 'var(--surface-light)', 
                 borderRadius: '6px',
                 overflow: 'hidden',
-                marginBottom: '24px'
+                marginBottom: '16px'
               }}>
                 <div style={{
                   width: `${getProgressPercentage()}%`,
@@ -197,6 +207,25 @@ export function PomodoroTimer() {
                   transition: 'width 0.3s ease'
                 }} />
               </div>
+
+              {profile.activityTags && profile.activityTags.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <label className="label" style={{ fontSize: '14px', marginBottom: '8px' }}>Activity</label>
+                  <select
+                    className="select"
+                    value={sessionState.currentActivityTag || ''}
+                    onChange={(e) => handleActivityTagChange(e.target.value)}
+                    style={{ width: '100%' }}
+                  >
+                    <option value="">None</option>
+                    {profile.activityTags.map((tag) => (
+                      <option key={tag} value={tag}>
+                        {tag}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 justify-center">
@@ -258,6 +287,25 @@ export function PomodoroTimer() {
                 </>
               )}
             </div>
+
+            {profile.activityTags && profile.activityTags.length > 0 && (
+              <div className="input-group mb-3">
+                <label className="label">Activity (optional)</label>
+                <select
+                  className="select"
+                  value={selectedActivityTag}
+                  onChange={(e) => setSelectedActivityTag(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {profile.activityTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <button className="btn btn-primary btn-large" onClick={handleStartSession}>
               Start Session
             </button>
@@ -274,6 +322,7 @@ export function PomodoroTimer() {
           phaseType={loggingPhaseType}
           roundNumber={sessionState.currentRound}
           totalRounds={sessionState.totalRounds}
+          currentActivityTag={sessionState.currentActivityTag}
         />
       )}
 

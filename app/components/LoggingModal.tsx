@@ -4,11 +4,12 @@ import type { Question, Profile, SessionLog } from '../types/pomodoro';
 interface LoggingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (notes: string, answers: Record<string, string>) => void;
+  onSubmit: (notes: string, answers: Record<string, string>, activityTag?: string) => void;
   profile: Profile;
   phaseType: 'work' | 'break';
   roundNumber: number;
   totalRounds: number;
+  currentActivityTag?: string;
 }
 
 export function LoggingModal({
@@ -19,9 +20,11 @@ export function LoggingModal({
   phaseType,
   roundNumber,
   totalRounds,
+  currentActivityTag,
 }: LoggingModalProps) {
   const [notes, setNotes] = useState('');
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [activityTag, setActivityTag] = useState<string>(currentActivityTag || '');
 
   if (!isOpen) return null;
 
@@ -30,15 +33,17 @@ export function LoggingModal({
   );
 
   const handleSubmit = () => {
-    onSubmit(notes, answers);
+    onSubmit(notes, answers, activityTag || undefined);
     setNotes('');
     setAnswers({});
+    setActivityTag('');
   };
 
   const handleSkip = () => {
     onClose();
     setNotes('');
     setAnswers({});
+    setActivityTag('');
   };
 
   return (
@@ -56,6 +61,24 @@ export function LoggingModal({
         <p className="text-secondary mb-3">
           Round {roundNumber} of {totalRounds}
         </p>
+
+        {profile.activityTags && profile.activityTags.length > 0 && (
+          <div className="input-group">
+            <label className="label">Activity Tag</label>
+            <select
+              className="select"
+              value={activityTag}
+              onChange={(e) => setActivityTag(e.target.value)}
+            >
+              <option value="">None</option>
+              {profile.activityTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="input-group">
           <label className="label">Notes</label>

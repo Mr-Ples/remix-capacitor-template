@@ -38,6 +38,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       breakDuration: 10,
       useEndTime: false,
       endTime: '23:00',
+      activityTags: [],
       questions: [
         {
           id: Date.now().toString(),
@@ -153,6 +154,31 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     setEditingProfile({ ...editingProfile, questions: updatedQuestions });
   };
 
+  const addActivityTag = () => {
+    if (!editingProfile) return;
+    
+    const tags = editingProfile.activityTags || [];
+    setEditingProfile({
+      ...editingProfile,
+      activityTags: [...tags, 'New Tag']
+    });
+  };
+
+  const updateActivityTag = (index: number, value: string) => {
+    if (!editingProfile) return;
+    
+    const tags = [...(editingProfile.activityTags || [])];
+    tags[index] = value;
+    setEditingProfile({ ...editingProfile, activityTags: tags });
+  };
+
+  const deleteActivityTag = (index: number) => {
+    if (!editingProfile) return;
+    
+    const tags = (editingProfile.activityTags || []).filter((_, i) => i !== index);
+    setEditingProfile({ ...editingProfile, activityTags: tags });
+  };
+
   if (isEditing && editingProfile) {
     return (
       <div className="card">
@@ -263,6 +289,43 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
               }
             />
           </div>
+        </div>
+
+        <div className="mb-3">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <label className="label" style={{ marginBottom: 0 }}>Activity Tags</label>
+            <button className="btn btn-secondary" onClick={addActivityTag}>+ Add Tag</button>
+          </div>
+          <p className="text-secondary" style={{ fontSize: '12px', marginBottom: '12px' }}>
+            Tags help categorize your work sessions (e.g., Coding, Reading, Meeting)
+          </p>
+          
+          {(editingProfile.activityTags || []).length === 0 ? (
+            <p className="text-secondary" style={{ fontSize: '14px', fontStyle: 'italic' }}>
+              No tags yet. Click "+ Add Tag" to create one.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {(editingProfile.activityTags || []).map((tag, index) => (
+                <div key={index} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    style={{ width: '120px', padding: '6px 8px' }}
+                    value={tag}
+                    onChange={(e) => updateActivityTag(index, e.target.value)}
+                  />
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => deleteActivityTag(index)}
+                    style={{ padding: '6px 12px', fontSize: '14px' }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mb-3">

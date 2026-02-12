@@ -18,6 +18,11 @@ export interface Profile {
    * `useEndTime` is enabled, formatted as "HH:MM" (e.g. "18:00").
    */
   endTime?: string;
+  /**
+   * List of activity tags that can be assigned to rounds
+   * (e.g., "Coding", "Reading", "Meeting")
+   */
+  activityTags?: string[];
   questions: Question[];
   createdAt: string;
   updatedAt: string;
@@ -40,6 +45,7 @@ export interface SessionState {
   elapsedTime: number; // in seconds
   phaseDuration: number; // in seconds
   isActive: boolean;
+  currentActivityTag?: string; // Current activity tag for this round
 }
 
 export interface SessionLog {
@@ -51,6 +57,7 @@ export interface SessionLog {
   phaseEndTime: string;
   notes: string;
   answers: Record<string, string>; // questionId -> answer
+  activityTag?: string; // Activity tag for this round
 }
 
 export interface SessionSummary {
@@ -69,6 +76,7 @@ export const DEFAULT_PROFILE: Profile = {
   rounds: 16,
   workDuration: 50,
   breakDuration: 10,
+  activityTags: ['Coding', 'Reading', 'Writing', 'Meeting', 'Planning'],
   questions: [
     {
       id: 'q1',
