@@ -32,6 +32,12 @@ export class NotificationService {
     try {
       await this.initialize();
 
+      // On Android, the native PomodoroForegroundService is responsible for
+      // phase-complete notifications, so avoid duplicating them.
+      if (Capacitor.getPlatform() === 'android') {
+        return;
+      }
+
       const title = phaseType === 'work' ? 'Work Phase Complete!' : 'Break Phase Complete!';
       const body = `Round ${roundNumber}/${totalRounds} - Tap to log your progress`;
 
@@ -69,45 +75,10 @@ export class NotificationService {
 
       const phase = phaseType === 'work' ? 'Work Session' : 'Break Time';
 
-      // Use foreground service on native platforms for persistent notification
+      // On Android, the native PomodoroForegroundService owns the persistent
+      // countdown notification, so this becomes a no-op to avoid conflicts.
       if (Capacitor.getPlatform() === 'android') {
-        const body = `Round ${roundNumber}/${totalRounds} - ${timeRemaining} remaining`;
-        
-        try {
-          if (!this.isForegroundServiceRunning) {
-            console.log('Starting foreground service...');
-            await ForegroundService.startForegroundService({
-              body,
-              id: 1,
-              smallIcon: 'ic_launcher_foreground',
-              title: phase,
-            });
-            console.log('Foreground service started successfully');
-            this.isForegroundServiceRunning = true;
-          } else {
-            await ForegroundService.updateForegroundService({
-              body,
-              id: 1,
-              smallIcon: 'ic_launcher_foreground',
-              title: phase,
-            });
-          }
-        } catch (error) {
-          console.error('Foreground service error:', error);
-          // Fallback to local notifications
-          await LocalNotifications.schedule({
-            notifications: [
-              {
-                id: 999,
-                title: phase,
-                body,
-                schedule: { at: new Date(Date.now() + 100) },
-                sound: undefined,
-                attachments: undefined,
-              },
-            ],
-          });
-        }
+        return;
       } else {
         // Fallback to local notifications on web
         const body = `Round ${roundNumber}/${totalRounds} - ${timeRemaining} remaining`;

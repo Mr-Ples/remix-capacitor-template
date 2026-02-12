@@ -6,6 +6,18 @@ export interface Profile {
   rounds: number;
   workDuration: number; // in minutes
   breakDuration: number; // in minutes
+  /**
+   * When true, this profile uses a clock end time instead of a fixed
+   * number of rounds. The actual number of rounds is calculated when
+   * the user taps "Start", based on the current time, the configured
+   * end time, and the round length (work + break).
+   */
+  useEndTime?: boolean;
+  /**
+   * Local clock time (24h) at which the session should end when
+   * `useEndTime` is enabled, formatted as "HH:MM" (e.g. "18:00").
+   */
+  endTime?: string;
   questions: Question[];
   createdAt: string;
   updatedAt: string;

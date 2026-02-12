@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
 import type { Profile, SessionState, SessionLog } from '../types/pomodoro';
 import { SessionController } from '../services/sessionController';
+import PomodoroService from '../services/pomodoroService';
 import { StorageService } from '../services/storage';
 import { LoggingModal } from './LoggingModal';
 import { ProfileManager } from './ProfileManager';
@@ -60,6 +62,21 @@ export function PomodoroTimer() {
         setProfile(resumedProfile);
         setTimeRemaining(controller.getTimeRemaining());
       }
+
+      // On Android, if a phase completed while the app was closed,
+      // the native foreground service may have a pending log entry.
+      // Check for it and show the logging modal accordingly.
+      if (Capacitor.getPlatform() === 'android') {
+        try {
+          const nativeState = await PomodoroService.getSessionState();
+          if (nativeState.pendingLog) {
+            setLoggingPhaseType(nativeState.pendingLog.phaseType as 'work' | 'break');
+            setShowLoggingModal(true);
+          }
+        } catch (e) {
+          console.error('Error checking native pending log', e);
+        }
+      }
     }
   };
 
@@ -97,6 +114,15 @@ export function PomodoroTimer() {
     };
 
     await StorageService.addSessionLog(log);
+    // Clear any native pending log marker on Android so we don't
+    // prompt the user again for the same phase.
+    if (Capacitor.getPlatform() === 'android') {
+      try {
+        await PomodoroService.clearPendingLog();
+      } catch (e) {
+        console.error('Error clearing native pending log', e);
+      }
+    }
     setShowLoggingModal(false);
   };
 
@@ -189,10 +215,12 @@ export function PomodoroTimer() {
             </div>
 
             <div className="mt-3 text-secondary" style={{ fontSize: '14px' }}>
-              <div>
-                Total session time: {profile.rounds} × ({profile.workDuration} + {profile.breakDuration}) = {' '}
-                {profile.rounds * (profile.workDuration + profile.breakDuration)} minutes
-              </div>
+              {sessionState && (
+                <div>
+                  Total session time: {sessionState.totalRounds} × ({profile.workDuration} + {profile.breakDuration}) ={' '}
+                  {sessionState.totalRounds * (profile.workDuration + profile.breakDuration)} minutes
+                </div>
+              )}
               <div className="mt-1">
                 Time remaining in session: {' '}
                 {Math.floor(
@@ -209,12 +237,26 @@ export function PomodoroTimer() {
               <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>
                 Ready to Start?
               </div>
-              <div className="text-secondary" style={{ fontSize: '14px' }}>
-                {profile.rounds} rounds × ({profile.workDuration} min work + {profile.breakDuration} min break)
-              </div>
-              <div className="text-secondary" style={{ fontSize: '14px' }}>
-                Total duration: {profile.rounds * (profile.workDuration + profile.breakDuration)} minutes
-              </div>
+              {profile.useEndTime && profile.endTime ? (
+                <>
+                  <div className="text-secondary" style={{ fontSize: '14px' }}>
+                    Session will run until {profile.endTime} using rounds of{' '}
+                    {profile.workDuration} min work + {profile.breakDuration} min break.
+                  </div>
+                  <div className="text-secondary" style={{ fontSize: '14px' }}>
+                    Rounds are calculated when you tap Start based on the current time.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-secondary" style={{ fontSize: '14px' }}>
+                    {profile.rounds} rounds × ({profile.workDuration} min work + {profile.breakDuration} min break)
+                  </div>
+                  <div className="text-secondary" style={{ fontSize: '14px' }}>
+                    Total duration: {profile.rounds * (profile.workDuration + profile.breakDuration)} minutes
+                  </div>
+                </>
+              )}
             </div>
             <button className="btn btn-primary btn-large" onClick={handleStartSession}>
               Start Session

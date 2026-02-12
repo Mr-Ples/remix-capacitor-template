@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { SessionLog, Profile } from '../types/pomodoro';
 import { StorageService } from '../services/storage';
+import { exportLogs } from '../services/logExport';
 
 interface LogsViewProps {
   isOpen: boolean;
@@ -58,6 +59,21 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
     return date.toLocaleString();
   };
 
+  const handleExportLogs = async () => {
+    const logsToExport = getFilteredLogs();
+    if (logsToExport.length === 0) {
+      alert('No logs to export for the selected profile.');
+      return;
+    }
+
+    try {
+      await exportLogs(logsToExport);
+    } catch (error) {
+      console.error('Error exporting logs', error);
+      alert('Failed to export logs. Please try again.');
+    }
+  };
+
   if (!isOpen) return null;
 
   const filteredLogs = getFilteredLogs();
@@ -77,7 +93,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
         </div>
 
         <div className="mb-3">
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ flex: 1 }}>
               <label className="label">Filter by Profile</label>
               <select
@@ -93,15 +109,27 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="label" style={{ visibility: 'hidden' }}>Action</label>
-              <button 
-                className="btn btn-danger" 
-                onClick={handleClearLogs}
-                disabled={logs.length === 0}
-              >
-                Clear All Logs
-              </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <div>
+                <label className="label" style={{ visibility: 'hidden' }}>Action</label>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleExportLogs}
+                  disabled={logs.length === 0}
+                >
+                  Export Logs
+                </button>
+              </div>
+              <div>
+                <label className="label" style={{ visibility: 'hidden' }}>Action</label>
+                <button
+                  className="btn btn-danger"
+                  onClick={handleClearLogs}
+                  disabled={logs.length === 0}
+                >
+                  Clear All Logs
+                </button>
+              </div>
             </div>
           </div>
         </div>

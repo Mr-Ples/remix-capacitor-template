@@ -36,6 +36,8 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       rounds: 16,
       workDuration: 50,
       breakDuration: 10,
+      useEndTime: false,
+      endTime: '23:00',
       questions: [
         {
           id: Date.now().toString(),
@@ -168,14 +170,27 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
         <div className="flex gap-2 mb-3">
           <div className="input-group" style={{ flex: 1 }}>
-            <label className="label">Rounds</label>
+            <label className="label">
+              Rounds
+              {editingProfile.useEndTime && (
+                <span style={{ marginLeft: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  (calculated from end time)
+                </span>
+              )}
+            </label>
             <input
               type="number"
               className="input"
               min="1"
               max="100"
               value={editingProfile.rounds}
-              onChange={(e) => setEditingProfile({ ...editingProfile, rounds: parseInt(e.target.value) || 1 })}
+              onChange={(e) =>
+                setEditingProfile({
+                  ...editingProfile,
+                  rounds: parseInt(e.target.value) || 1,
+                })
+              }
+              disabled={!!editingProfile.useEndTime}
             />
           </div>
 
@@ -187,7 +202,12 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
               min="1"
               max="120"
               value={editingProfile.workDuration}
-              onChange={(e) => setEditingProfile({ ...editingProfile, workDuration: parseInt(e.target.value) || 1 })}
+              onChange={(e) =>
+                setEditingProfile({
+                  ...editingProfile,
+                  workDuration: parseInt(e.target.value) || 1,
+                })
+              }
             />
           </div>
 
@@ -199,7 +219,48 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
               min="0"
               max="960"
               value={editingProfile.breakDuration}
-              onChange={(e) => setEditingProfile({ ...editingProfile, breakDuration: parseInt(e.target.value) || 0 })}
+              onChange={(e) =>
+                setEditingProfile({
+                  ...editingProfile,
+                  breakDuration: parseInt(e.target.value) || 0,
+                })
+              }
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 mb-3">
+          <div className="input-group" style={{ flex: 1 }}>
+            <label className="label">Use End Time Instead of Fixed Rounds</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                type="checkbox"
+                checked={!!editingProfile.useEndTime}
+                onChange={(e) =>
+                  setEditingProfile({
+                    ...editingProfile,
+                    useEndTime: e.target.checked,
+                  })
+                }
+              />
+              <span className="text-secondary" style={{ fontSize: '12px' }}>
+                When enabled, rounds are calculated when you tap Start based on the end time.
+              </span>
+            </div>
+          </div>
+
+          <div className="input-group" style={{ flex: 1 }}>
+            <label className="label">End Time (HH:MM)</label>
+            <input
+              type="time"
+              className="input"
+              value={editingProfile.endTime || '18:00'}
+              onChange={(e) =>
+                setEditingProfile({
+                  ...editingProfile,
+                  endTime: e.target.value,
+                })
+              }
             />
           </div>
         </div>
@@ -300,7 +361,10 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       >
         {profiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
-            {profile.name} ({profile.rounds} rounds, {profile.workDuration}/{profile.breakDuration} min)
+            {profile.name}{' '}
+            {profile.useEndTime && profile.endTime
+              ? `(ends at ${profile.endTime}, ${profile.workDuration}/${profile.breakDuration} min)`
+              : `(${profile.rounds} rounds, ${profile.workDuration}/${profile.breakDuration} min)`}
           </option>
         ))}
       </select>

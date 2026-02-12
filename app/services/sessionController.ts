@@ -1,4 +1,6 @@
 import type { Profile, SessionState, SessionLog } from '../types/pomodoro';
+import { Capacitor } from '@capacitor/core';
+import PomodoroService from './pomodoroService';
 import { StorageService } from './storage';
 import { NotificationService } from './notifications';
 
@@ -15,6 +17,7 @@ export class SessionController {
   private intervalId: number | null = null;
   private listeners: Set<(event: SessionEvent) => void> = new Set();
   private ongoingNotificationInterval: number | null = null;
+  private useNativeService: boolean = Capacitor.getPlatform() === 'android';
 
   constructor() {
     this.setupNotificationListeners();
@@ -44,25 +47,160 @@ export class SessionController {
 
   async startSession(profile: Profile): Promise<void> {
     this.profile = profile;
+
+    const now = new Date();
+    const nowMinutes =
+      now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+    const workMinutes = profile.workDuration;
+    const breakMinutes = profile.breakDuration;
+    const roundLengthMinutes = workMinutes + breakMinutes;
+
+    let totalRounds = profile.rounds;
+    let isWorkPhase = true;
+    let phaseDurationSec = workMinutes * 60;
+    let phaseStartTimeMillis = Date.now();
+    let elapsedTimeSec = 0;
+
+    // When a profile is configured to use an end time, calculate how many
+    // rounds fit between "now" and that end time, and if we're in the
+    // middle of a round, start with a shortened first round instead of
+    // a shortened last round.
+    if (
+      profile.useEndTime &&
+      profile.endTime &&
+      roundLengthMinutes > 0
+    ) {
+      const [endHourStr, endMinStr] = profile.endTime.split(':');
+      const endHour = parseInt(endHourStr || '0', 10);
+      const endMinute = parseInt(endMinStr || '0', 10);
+      const endMinutes = endHour * 60 + endMinute;
+
+      const minutesUntilEnd = endMinutes - nowMinutes;
+
+      if (minutesUntilEnd > 0) {
+        const rawRounds = minutesUntilEnd / roundLengthMinutes;
+        const computedRounds = Math.ceil(rawRounds);
+
+        if (computedRounds >= 1) {
+          totalRounds = computedRounds;
+
+          // Total remaining time in the first (possibly shortened) round
+          const remainingFirstRoundMinutes =
+            minutesUntilEnd - (computedRounds - 1) * roundLengthMinutes;
+
+          // Offset into the conceptual round where we are starting
+          const offsetWithinRoundMinutes =
+            roundLengthMinutes - remainingFirstRoundMinutes;
+
+          // Determine current phase and how far into it we are
+          if (offsetWithinRoundMinutes < workMinutes || workMinutes === 0) {
+            // In work phase
+            isWorkPhase = true;
+            const offsetWithinWorkMinutes = Math.max(
+              0,
+              Math.min(offsetWithinRoundMinutes, workMinutes)
+            );
+            const offsetWithinWorkSec = Math.round(
+              offsetWithinWorkMinutes * 60
+            );
+            phaseDurationSec = workMinutes * 60;
+            elapsedTimeSec = offsetWithinWorkSec;
+          } else {
+            // In break phase
+            isWorkPhase = false;
+            const offsetWithinBreakMinutes = Math.max(
+              0,
+              Math.min(
+                offsetWithinRoundMinutes - workMinutes,
+                breakMinutes
+              )
+            );
+            const offsetWithinBreakSec = Math.round(
+              offsetWithinBreakMinutes * 60
+            );
+            phaseDurationSec = breakMinutes * 60;
+            elapsedTimeSec = offsetWithinBreakSec;
+          }
+
+          phaseStartTimeMillis = Date.now() - elapsedTimeSec * 1000;
+        }
+      }
+    }
+
     this.state = {
       profileId: profile.id,
       currentRound: 1,
-      totalRounds: profile.rounds,
-      isWorkPhase: true,
-      startTime: Date.now(),
-      elapsedTime: 0,
-      phaseDuration: profile.workDuration * 60, // Convert to seconds
+      totalRounds,
+      isWorkPhase,
+      startTime: phaseStartTimeMillis,
+      elapsedTime: elapsedTimeSec,
+      phaseDuration: phaseDurationSec,
       isActive: true,
     };
 
     await StorageService.saveSessionState(this.state);
     await NotificationService.initialize();
+
+    // Start native foreground service on Android so the notification
+    // countdown keeps running even if the JS runtime is killed.
+    if (this.useNativeService) {
+      await PomodoroService.startSession({
+        workDurationMin: profile.workDuration,
+        breakDurationMin: profile.breakDuration,
+        totalRounds,
+        profileId: profile.id,
+        currentRound: this.state.currentRound,
+        isWorkPhase,
+        phaseStartTimeMillis: phaseStartTimeMillis,
+      });
+    }
+
     this.startTimer();
     this.startOngoingNotification();
     this.emit({ type: 'stateChange', state: this.state });
   }
 
   async resumeSession(): Promise<boolean> {
+    // On Android, use the native foreground service as the source of truth
+    // so the notification countdown and JS state stay perfectly in sync.
+    if (this.useNativeService) {
+      const nativeState = await PomodoroService.getSessionState();
+      if (nativeState.isActive) {
+        const profiles = await StorageService.getProfiles();
+        this.profile = profiles.find(p => p.id === nativeState.profileId) || null;
+
+        if (!this.profile) {
+          await StorageService.clearSessionState();
+          return false;
+        }
+
+        const phaseDurationSec = nativeState.phaseDurationSec ?? 0;
+        const timeRemainingSec = nativeState.timeRemainingSec ?? 0;
+        const elapsedTime = Math.max(0, phaseDurationSec - timeRemainingSec);
+        const phaseEndTimeMillis = nativeState.phaseEndTimeMillis ?? Date.now();
+        const startTime = phaseEndTimeMillis - phaseDurationSec * 1000;
+
+        this.state = {
+          profileId: nativeState.profileId!,
+          currentRound: nativeState.currentRound ?? 1,
+          totalRounds: nativeState.totalRounds ?? this.profile.rounds,
+          isWorkPhase: nativeState.isWorkPhase ?? true,
+          startTime,
+          elapsedTime,
+          phaseDuration: phaseDurationSec,
+          isActive: true,
+        };
+
+        await NotificationService.initialize();
+        this.startTimer();
+        this.startOngoingNotification();
+        this.emit({ type: 'stateChange', state: this.state });
+        return true;
+      }
+    }
+
+    // Fallback: JS-only stored session (web / no native session running)
     const savedState = await StorageService.getSessionState();
     if (!savedState || !savedState.isActive) {
       return false;
@@ -99,12 +237,21 @@ export class SessionController {
       this.state.pausedAt = Date.now();
       this.stopTimer();
       this.stopOngoingNotification();
+      // Stop native foreground service when pausing on Android
+      if (this.useNativeService) {
+        PomodoroService.stopSession().catch(() => {});
+      }
       StorageService.saveSessionState(this.state);
       this.emit({ type: 'stateChange', state: this.state });
     }
   }
 
   async stopSession(): Promise<void> {
+    // Stop native foreground service on Android
+    if (this.useNativeService) {
+      await PomodoroService.stopSession().catch(() => {});
+    }
+
     this.stopTimer();
     this.stopOngoingNotification();
     await NotificationService.clearOngoingNotification();
