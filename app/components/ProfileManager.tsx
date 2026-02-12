@@ -73,6 +73,12 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
     await loadProfiles();
 
+    // If it's a new profile (wasn't existing), auto-select it
+    if (existingIndex === -1) {
+      await StorageService.setActiveProfileId(editingProfile.id);
+      onProfileChange(editingProfile);
+    }
+
     // Update parent if we edited the currently active profile
     if (editingProfile.id === currentProfile.id) {
       onProfileChange(editingProfile);
@@ -318,7 +324,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
             <button className="btn btn-secondary" onClick={addActivityTag}>+ Add Tag</button>
           </div>
           <p className="text-secondary" style={{ fontSize: '12px', marginBottom: '12px' }}>
-            Tags help categorize your work sessions (e.g., Coding, Reading, Meeting)
+            Tags help categorize your work sessions (e.g., Coding, Reading, Meeting).
           </p>
 
           {(editingProfile.activityTags || []).length === 0 ? (
@@ -337,51 +343,72 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
                     placeholder="Tag Name"
                     onChange={(e) => updateActivityTag(index, e.target.value)}
                   />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
-                    <label style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>Goal:</label>
-                    <input
-                      type="text"
-                      className="input"
-                      style={{ padding: '6px 8px', minWidth: '60px' }}
-                      value={editingProfile.goals?.[tag] || ''}
-                      placeholder="-"
-                      onChange={(e) => {
-                        const valStr = e.target.value;
-                        const newGoals = { ...(editingProfile.goals || {}) };
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <label style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>Target:</label>
+                    {(() => {
+                      const rawVal = editingProfile.goals?.[tag];
+                      const isPercentage = typeof rawVal === 'string' && rawVal.endsWith('%');
+                      const numVal = isPercentage
+                        ? parseInt((rawVal as string).replace('%', ''))
+                        : (typeof rawVal === 'number' ? rawVal : '');
 
-                        // Check if it's a percentage format (e.g. "50%")
-                        const isPercentage = valStr.trim().endsWith('%');
-                        const numVal = parseInt(valStr.replace('%', ''));
+                      return (
+                        <>
+                          <input
+                            type="number"
+                            className="input"
+                            style={{ padding: '6px 8px', width: '70px' }}
+                            value={numVal}
+                            placeholder="0"
+                            min="0"
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value);
+                              const newGoals = { ...(editingProfile.goals || {}) };
 
-                        if (!valStr.trim()) {
-                          delete newGoals[tag];
-                        } else if (isPercentage && !isNaN(numVal)) {
-                          newGoals[tag] = `${numVal}%`;
-                        } else if (!isNaN(numVal) && numVal > 0) {
-                          newGoals[tag] = numVal;
-                        } else {
-                          // Allow typing partial input, but don't save invalid states if strict? 
-                          // Actually better to just save as string if it looks like they are typing a %
-                          // For now, let's keep it simple: if it parses as int, save int. 
-                          // If it ends with %, save as string.
-                          // logic above handles these cases.
-                          // What if user types "50" then "%"? 
-                          // The above logic: "50" -> 50. "50%" -> "50%".
-                          // "50% " -> "50%".
+                              if (isNaN(val) || val <= 0) {
+                                delete newGoals[tag];
+                              } else {
+                                newGoals[tag] = isPercentage ? `${val}%` : val;
+                              }
+                              setEditingProfile({ ...editingProfile, goals: newGoals });
+                            }}
+                          />
+                          <button
+                            className="btn btn-secondary"
+                            style={{
+                              padding: '6px 8px',
+                              fontSize: '12px',
+                              minWidth: '40px',
+                              backgroundColor: isPercentage ? 'var(--primary-color)' : 'var(--surface-hover)',
+                              color: isPercentage ? 'white' : 'var(--text-primary)',
+                              border: '1px solid var(--border-color)'
+                            }}
+                            onClick={() => {
+                              const newGoals = { ...(editingProfile.goals || {}) };
+                              if (!rawVal) {
+                                // If empty, just toggle "mode" conceptually for next input? 
+                                // Hard to do without state. So we just assume if they click toggle, 
+                                // they want to switch the *existing* value.
+                                // If no value, we can't really flip.
+                                return;
+                              }
 
-                          // If completely invalid (e.g. "abc"), maybe don't update? 
-                          // Or let them type and validate on blur?
-                          // React controlled input needs to update state.
-                          // Let's store whatever they type as string if it doesn't parse cleanly to number, 
-                          // but we need to satisfy the type.
-                          // The type is number | string.
-
-                          // Let's just store the string if it's not a pure number
-                          newGoals[tag] = valStr;
-                        }
-                        setEditingProfile({ ...editingProfile, goals: newGoals });
-                      }}
-                    />
+                              if (isPercentage) {
+                                // Switch to rounds (number)
+                                newGoals[tag] = typeof numVal === 'number' ? numVal : 0;
+                              } else {
+                                // Switch to %
+                                newGoals[tag] = `${numVal || 0}%`;
+                              }
+                              setEditingProfile({ ...editingProfile, goals: newGoals });
+                            }}
+                            title="Toggle between Rounds (#) and Percentage (%)"
+                          >
+                            {isPercentage ? '%' : '#'}
+                          </button>
+                        </>
+                      );
+                    })()}
                   </div>
                   <button
                     className="btn btn-danger"

@@ -500,6 +500,7 @@ export function PomodoroTimer() {
       <LogsView
         isOpen={showLogsView}
         onClose={() => setShowLogsView(false)}
+        onDataChange={loadSessionLogs}
       />
 
       {/* Daily Goals Overview */}

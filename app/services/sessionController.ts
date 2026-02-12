@@ -1,5 +1,6 @@
 import type { Profile, SessionState } from '../types/pomodoro';
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import PomodoroService from './pomodoroService';
 import { StorageService } from './storage';
 import { NotificationService } from './notifications';
@@ -30,6 +31,7 @@ export class SessionController {
 
   constructor() {
     this.setupNotificationListeners();
+    this.setupAppListeners();
   }
 
   private setupNotificationListeners() {
@@ -323,7 +325,15 @@ export class SessionController {
     this.intervalId = window.setInterval(() => {
       if (!this.state || !this.profile) return;
 
-      this.state.elapsedTime++;
+      // Use wall-clock time to prevent drift/freezing in background
+      const now = Date.now();
+      const newElapsed = Math.floor((now - this.state.startTime) / 1000);
+
+      // Ensure we don't go backwards (if clock skews) and update state
+      if (newElapsed > this.state.elapsedTime) {
+        this.state.elapsedTime = newElapsed;
+      }
+
 
       if (this.state.elapsedTime >= this.state.phaseDuration) {
         this.handlePhaseEnd();
@@ -387,6 +397,39 @@ export class SessionController {
     this.stopOngoingNotification();
     this.listeners.clear();
     this.removeNotificationListeners();
+    this.removeAppListeners();
+  }
+
+  private appListener: any = null;
+
+  private async setupAppListeners() {
+    this.appListener = await App.addListener('appStateChange', (state: { isActive: boolean }) => {
+      if (state.isActive) {
+        // App resumed - force immediate update
+        if (this.state && this.state.isActive) {
+          const now = Date.now();
+          const newElapsed = Math.floor((now - this.state.startTime) / 1000);
+
+          if (newElapsed > this.state.elapsedTime) {
+            this.state.elapsedTime = newElapsed;
+          }
+
+          // Check for phase end immediately
+          if (this.state.elapsedTime >= this.state.phaseDuration) {
+            this.handlePhaseEnd();
+          } else {
+            this.emit({ type: 'tick', state: this.state });
+          }
+        }
+      }
+    });
+  }
+
+  private removeAppListeners() {
+    if (this.appListener) {
+      this.appListener.remove();
+      this.appListener = null;
+    }
   }
 
   private isHandlingPhaseEnd = false;

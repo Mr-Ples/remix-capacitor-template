@@ -6,9 +6,10 @@ import { exportLogs } from '../services/logExport';
 interface LogsViewProps {
   isOpen: boolean;
   onClose: () => void;
+  onDataChange?: () => void;
 }
 
-export function LogsView({ isOpen, onClose }: LogsViewProps) {
+export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
   const [logs, setLogs] = useState<SessionLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('all');
@@ -22,8 +23,8 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
     }
   }, [isOpen]);
 
-  const loadLogs = async () => {
-    setLoading(true);
+  const loadLogs = async (silent = false) => {
+    if (!silent) setLoading(true);
     const loadedLogs = await StorageService.getSessionLogs();
     const loadedProfiles = await StorageService.getProfiles();
 
@@ -41,6 +42,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
     // if (confirm('Are you sure you want to clear all logs? This cannot be undone.')) {
     await StorageService.clearSessionLogs();
     await loadLogs();
+    onDataChange?.();
     // }
   };
 
@@ -90,7 +92,8 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
     if (!editFormData) return;
 
     await StorageService.updateSessionLog(editFormData);
-    await loadLogs();
+    await loadLogs(true);
+    onDataChange?.();
     setEditingLogId(null);
     setEditFormData(null);
   };
@@ -103,6 +106,7 @@ export function LogsView({ isOpen, onClose }: LogsViewProps) {
       await StorageService.addSessionLog(log);
     }
     await loadLogs();
+    onDataChange?.();
     // }
   };
 
