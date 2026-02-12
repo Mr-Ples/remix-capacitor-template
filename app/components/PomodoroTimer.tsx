@@ -19,14 +19,22 @@ export function PomodoroTimer() {
   const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
   const controllerRef = useRef<SessionController | null>(null);
 
+  const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
+
   useEffect(() => {
     initializeApp();
+    loadSessionLogs();
     return () => {
       if (controllerRef.current) {
         controllerRef.current.removeNotificationListeners();
       }
     };
   }, []);
+
+  const loadSessionLogs = async () => {
+    const logs = await StorageService.getSessionLogs();
+    setSessionLogs(logs);
+  };
 
   const initializeApp = async () => {
     // Load active profile
@@ -49,10 +57,13 @@ export function PomodoroTimer() {
         setShowLoggingModal(true);
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
+        // Reload logs when a phase ends (in case background service logged it)
+        loadSessionLogs();
       } else if (event.type === 'sessionEnd') {
         alert('Session Complete! Great work!');
         setSessionState(null);
         setTimeRemaining(0);
+        loadSessionLogs();
       }
     });
 
@@ -128,6 +139,8 @@ export function PomodoroTimer() {
     };
 
     await StorageService.addSessionLog(log);
+    await loadSessionLogs(); // Refresh logs
+
     // Clear any native pending log marker on Android so we don't
     // prompt the user again for the same phase.
     if (Capacitor.getPlatform() === 'android') {
@@ -155,6 +168,39 @@ export function PomodoroTimer() {
     return ((sessionState.phaseDuration - timeRemaining) / sessionState.phaseDuration) * 100;
   };
 
+  const getCompletedRoundsForTag = (tag: string | undefined): number => {
+    if (!tag) return 0;
+    const today = new Date().toDateString();
+    return sessionLogs.filter(log => {
+      const logDate = new Date(log.phaseEndTime).toDateString();
+      // Count work phases that match the tag
+      return log.phaseType === 'work' && log.activityTag === tag && logDate === today;
+    }).length;
+  };
+
+  const renderGoalProgress = (tag: string | undefined) => {
+    if (!tag) return null;
+
+    const target = profile?.goals?.[tag];
+
+    if (!target) {
+      return (
+        <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+          No daily goal set
+        </div>
+      );
+    }
+
+    const completed = getCompletedRoundsForTag(tag);
+    const isMet = completed >= target;
+
+    return (
+      <div style={{ marginTop: '4px', fontSize: '13px', color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
+        Daily Goal: <strong>{completed} / {target}</strong> rounds {isMet && '✓'}
+      </div>
+    );
+  };
+
   if (!profile) {
     return <div className="container text-center">Loading...</div>;
   }
@@ -165,10 +211,10 @@ export function PomodoroTimer() {
     <div className="container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <h1 style={{ fontSize: '32px', fontWeight: '700', margin: 0 }}>
-        🍅 Pomodoro Plus
+          🍅 Pomodoro Plus
         </h1>
-        <button 
-          className="btn btn-secondary" 
+        <button
+          className="btn btn-secondary"
           onClick={() => setShowLogsView(true)}
         >
           View Logs
@@ -195,10 +241,10 @@ export function PomodoroTimer() {
               <div style={{ fontSize: '72px', fontWeight: '700', marginBottom: '16px' }}>
                 {formatTime(timeRemaining)}
               </div>
-              <div style={{ 
-                width: '100%', 
-                height: '12px', 
-                backgroundColor: 'var(--surface-light)', 
+              <div style={{
+                width: '100%',
+                height: '12px',
+                backgroundColor: 'var(--surface-light)',
                 borderRadius: '6px',
                 overflow: 'hidden',
                 marginBottom: '16px'
@@ -227,6 +273,7 @@ export function PomodoroTimer() {
                       </option>
                     ))}
                   </select>
+                  {renderGoalProgress(sessionState.currentActivityTag)}
                 </div>
               )}
             </div>
@@ -256,9 +303,9 @@ export function PomodoroTimer() {
               <div className="mt-1">
                 Time remaining in session: {' '}
                 {Math.floor(
-                  ((sessionState.totalRounds - sessionState.currentRound) * 
-                    (profile.workDuration + profile.breakDuration) + 
-                  timeRemaining / 60)
+                  ((sessionState.totalRounds - sessionState.currentRound) *
+                    (profile.workDuration + profile.breakDuration) +
+                    timeRemaining / 60)
                 )} minutes
               </div>
             </div>
@@ -306,6 +353,7 @@ export function PomodoroTimer() {
                     </option>
                   ))}
                 </select>
+                {renderGoalProgress(selectedActivityTag)}
               </div>
             )}
 
@@ -333,6 +381,45 @@ export function PomodoroTimer() {
         isOpen={showLogsView}
         onClose={() => setShowLogsView(false)}
       />
+
+      {/* Daily Goals Overview */}
+      {profile && profile.goals && Object.keys(profile.goals).length > 0 && (
+        <div className="card mt-4">
+          <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>Daily Goals</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {Object.entries(profile.goals).map(([tag, target]) => {
+              const completed = getCompletedRoundsForTag(tag);
+              const percent = Math.min(100, (completed / target) * 100);
+              const isMet = completed >= target;
+
+              return (
+                <div key={tag}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '14px' }}>
+                    <span style={{ fontWeight: '500' }}>{tag}</span>
+                    <span style={{ color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
+                      {completed} / {target} {isMet && '✓'}
+                    </span>
+                  </div>
+                  <div style={{
+                    width: '100%',
+                    height: '8px',
+                    backgroundColor: 'var(--surface-light)',
+                    borderRadius: '4px',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{
+                      width: `${percent}%`,
+                      height: '100%',
+                      backgroundColor: isMet ? 'var(--success-color)' : 'var(--primary-color)',
+                      transition: 'width 0.3s ease'
+                    }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

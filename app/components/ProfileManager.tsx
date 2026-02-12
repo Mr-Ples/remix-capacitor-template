@@ -63,7 +63,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     if (!editingProfile) return;
 
     editingProfile.updatedAt = new Date().toISOString();
-    
+
     const existingIndex = profiles.findIndex(p => p.id === editingProfile.id);
     if (existingIndex >= 0) {
       await StorageService.updateProfile(editingProfile);
@@ -72,6 +72,14 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     }
 
     await loadProfiles();
+
+    // Update parent if we edited the currently active profile
+    if (editingProfile.id === currentProfile.id) {
+      onProfileChange(editingProfile);
+      // Also update storage for active profile just in case, though StorageService handles ID references
+      await StorageService.setActiveProfileId(editingProfile.id);
+    }
+
     setIsEditing(false);
     setEditingProfile(null);
   };
@@ -81,11 +89,11 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       alert('Cannot delete the last profile');
       return;
     }
-    
+
     if (confirm('Are you sure you want to delete this profile?')) {
       await StorageService.deleteProfile(profileId);
       await loadProfiles();
-      
+
       if (currentProfile.id === profileId) {
         const remaining = profiles.filter(p => p.id !== profileId);
         if (remaining.length > 0) {
@@ -97,14 +105,14 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const addQuestion = () => {
     if (!editingProfile) return;
-    
+
     const newQuestion: Question = {
       id: Date.now().toString(),
       text: 'New Question',
       type: 'both',
       options: ['Option 1', 'Option 2', 'Option 3']
     };
-    
+
     setEditingProfile({
       ...editingProfile,
       questions: [...editingProfile.questions, newQuestion]
@@ -113,7 +121,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const updateQuestion = (index: number, field: keyof Question, value: any) => {
     if (!editingProfile) return;
-    
+
     const updatedQuestions = [...editingProfile.questions];
     updatedQuestions[index] = { ...updatedQuestions[index], [field]: value };
     setEditingProfile({ ...editingProfile, questions: updatedQuestions });
@@ -121,14 +129,14 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const deleteQuestion = (index: number) => {
     if (!editingProfile) return;
-    
+
     const updatedQuestions = editingProfile.questions.filter((_, i) => i !== index);
     setEditingProfile({ ...editingProfile, questions: updatedQuestions });
   };
 
   const updateQuestionOption = (questionIndex: number, optionIndex: number, value: string) => {
     if (!editingProfile) return;
-    
+
     const updatedQuestions = [...editingProfile.questions];
     const options = [...updatedQuestions[questionIndex].options];
     options[optionIndex] = value;
@@ -138,7 +146,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const addQuestionOption = (questionIndex: number) => {
     if (!editingProfile) return;
-    
+
     const updatedQuestions = [...editingProfile.questions];
     updatedQuestions[questionIndex].options.push('New Option');
     setEditingProfile({ ...editingProfile, questions: updatedQuestions });
@@ -146,7 +154,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const deleteQuestionOption = (questionIndex: number, optionIndex: number) => {
     if (!editingProfile) return;
-    
+
     const updatedQuestions = [...editingProfile.questions];
     updatedQuestions[questionIndex].options = updatedQuestions[questionIndex].options.filter(
       (_, i) => i !== optionIndex
@@ -156,7 +164,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const addActivityTag = () => {
     if (!editingProfile) return;
-    
+
     const tags = editingProfile.activityTags || [];
     setEditingProfile({
       ...editingProfile,
@@ -166,15 +174,28 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
   const updateActivityTag = (index: number, value: string) => {
     if (!editingProfile) return;
-    
+
     const tags = [...(editingProfile.activityTags || [])];
+    const oldTag = tags[index];
     tags[index] = value;
-    setEditingProfile({ ...editingProfile, activityTags: tags });
+
+    // Update goals map if exists
+    let newGoals = editingProfile.goals;
+    if (newGoals && newGoals[oldTag] !== undefined) {
+      newGoals = { ...newGoals };
+      const goalValue = newGoals[oldTag];
+      delete newGoals[oldTag];
+      if (value.trim()) {
+        newGoals[value] = goalValue;
+      }
+    }
+
+    setEditingProfile({ ...editingProfile, activityTags: tags, goals: newGoals });
   };
 
   const deleteActivityTag = (index: number) => {
     if (!editingProfile) return;
-    
+
     const tags = (editingProfile.activityTags || []).filter((_, i) => i !== index);
     setEditingProfile({ ...editingProfile, activityTags: tags });
   };
@@ -183,7 +204,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     return (
       <div className="card">
         <h2 className="modal-title mb-3">Edit Profile</h2>
-        
+
         <div className="input-group">
           <label className="label">Profile Name</label>
           <input
@@ -299,22 +320,44 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
           <p className="text-secondary" style={{ fontSize: '12px', marginBottom: '12px' }}>
             Tags help categorize your work sessions (e.g., Coding, Reading, Meeting)
           </p>
-          
+
           {(editingProfile.activityTags || []).length === 0 ? (
             <p className="text-secondary" style={{ fontSize: '14px', fontStyle: 'italic' }}>
               No tags yet. Click "+ Add Tag" to create one.
             </p>
           ) : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {(editingProfile.activityTags || []).map((tag, index) => (
-                <div key={index} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <input
                     type="text"
                     className="input"
-                    style={{ width: '120px', padding: '6px 8px' }}
+                    style={{ flex: 2, padding: '6px 8px' }}
                     value={tag}
+                    placeholder="Tag Name"
                     onChange={(e) => updateActivityTag(index, e.target.value)}
                   />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flex: 1 }}>
+                    <label style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>Goal:</label>
+                    <input
+                      type="number"
+                      className="input"
+                      style={{ padding: '6px 8px', minWidth: '60px' }}
+                      value={editingProfile.goals?.[tag] || ''}
+                      placeholder="-"
+                      min="0"
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        const newGoals = { ...(editingProfile.goals || {}) };
+                        if (isNaN(val) || val <= 0) {
+                          delete newGoals[tag];
+                        } else {
+                          newGoals[tag] = val;
+                        }
+                        setEditingProfile({ ...editingProfile, goals: newGoals });
+                      }}
+                    />
+                  </div>
                   <button
                     className="btn btn-danger"
                     onClick={() => deleteActivityTag(index)}

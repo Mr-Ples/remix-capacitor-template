@@ -23,6 +23,11 @@ export interface Profile {
    * (e.g., "Coding", "Reading", "Meeting")
    */
   activityTags?: string[];
+  /**
+   * Target number of rounds for specific activity tags.
+   * Key is the tag name, value is the target number of rounds.
+   */
+  goals?: Record<string, number>;
   questions: Question[];
   createdAt: string;
   updatedAt: string;
