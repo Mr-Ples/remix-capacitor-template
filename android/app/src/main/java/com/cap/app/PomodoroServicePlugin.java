@@ -1,55 +1,68 @@
 package com.cap.app;
 
 import android.content.Intent;
+import android.os.Build;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import org.json.JSONObject;
 
 @CapacitorPlugin(name = "PomodoroService")
 public class PomodoroServicePlugin extends Plugin {
 
     @PluginMethod
     public void startSession(PluginCall call) {
-        int workDurationMin = call.getInt("workDurationMin", 25);
-        int breakDurationMin = call.getInt("breakDurationMin", 5);
+        double workDurationMin = call.getDouble("workDurationMin", 25.0);
+        double breakDurationMin = call.getDouble("breakDurationMin", 5.0);
         int totalRounds = call.getInt("totalRounds", 4);
         String profileId = call.getString("profileId", "");
         int currentRound = call.getInt("currentRound", 1);
         boolean isWorkPhase = call.getBoolean("isWorkPhase", true);
         long phaseStartTimeMillis = call.getLong("phaseStartTimeMillis", System.currentTimeMillis());
-        int phaseDurationSec = call.getInt("phaseDurationSec", workDurationMin * 60);
+        int phaseDurationSec = call.getInt("phaseDurationSec", (int)(workDurationMin * 60));
         String activityTag = call.getString("activityTag", "");
 
         Intent serviceIntent = new Intent(getContext(), PomodoroForegroundService.class);
-        serviceIntent.setAction(PomodoroForegroundService.ACTION_START);
+        serviceIntent.setAction(PomodoroForegroundService.ACTION_START_SESSION);
         serviceIntent.putExtra("workDurationMin", workDurationMin);
         serviceIntent.putExtra("breakDurationMin", breakDurationMin);
         serviceIntent.putExtra("totalRounds", totalRounds);
-        serviceIntent.putExtra("profileId", profileId);
+        serviceIntent.putExtra("profileId", profileId != null ? profileId : "");
         serviceIntent.putExtra("currentRound", currentRound);
         serviceIntent.putExtra("isWorkPhase", isWorkPhase);
         serviceIntent.putExtra("phaseStartTimeMillis", phaseStartTimeMillis);
         serviceIntent.putExtra("phaseDurationSec", phaseDurationSec);
-        serviceIntent.putExtra("activityTag", activityTag);
+        if (activityTag != null) {
+            serviceIntent.putExtra("activityTag", activityTag);
+        }
 
-        getContext().startForegroundService(serviceIntent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getContext().startForegroundService(serviceIntent);
+        } else {
+            getContext().startService(serviceIntent);
+        }
         call.resolve();
     }
 
     @PluginMethod
     public void stopSession(PluginCall call) {
         Intent serviceIntent = new Intent(getContext(), PomodoroForegroundService.class);
-        serviceIntent.setAction(PomodoroForegroundService.ACTION_STOP);
+        serviceIntent.setAction(PomodoroForegroundService.ACTION_STOP_SESSION);
         getContext().startService(serviceIntent);
         call.resolve();
     }
 
     @PluginMethod
     public void getSessionState(PluginCall call) {
-        JSObject state = PomodoroForegroundService.getCurrentState();
-        call.resolve(state);
+        try {
+            JSONObject state = PomodoroForegroundService.getSessionState();
+            JSObject result = JSObject.fromJSONObject(state);
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Failed to get session state", e);
+        }
     }
 
     @PluginMethod

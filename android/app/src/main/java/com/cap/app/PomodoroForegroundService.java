@@ -5,17 +5,24 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import androidx.core.app.NotificationCompat;
 import com.getcapacitor.JSObject;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class PomodoroForegroundService extends Service {
-    public static final String ACTION_START = "START";
-    public static final String ACTION_STOP = "STOP";
+    public static final String ACTION_START_SESSION = "START_SESSION";
+    public static final String ACTION_STOP_SESSION = "STOP_SESSION";
     private static final String CHANNEL_ID = "PomodoroServiceChannel";
     private static final int NOTIFICATION_ID = 1;
 
@@ -26,6 +33,8 @@ public class PomodoroForegroundService extends Service {
     private static boolean isWorkPhase = true;
     private static long phaseEndTimeMillis = 0;
     private static int phaseDurationSec = 0;
+    private static int workDurationSec = 0;
+    private static int breakDurationSec = 0;
     private static String activityTag = "";
     private static JSObject pendingLog = null;
 
@@ -46,24 +55,35 @@ public class PomodoroForegroundService extends Service {
         }
 
         String action = intent.getAction();
-        if (ACTION_START.equals(action)) {
-            int workDurationMin = intent.getIntExtra("workDurationMin", 25);
-            int breakDurationMin = intent.getIntExtra("breakDurationMin", 5);
+        if (ACTION_START_SESSION.equals(action)) {
+            double workDurationMin = intent.getDoubleExtra("workDurationMin", 25.0);
+            double breakDurationMin = intent.getDoubleExtra("breakDurationMin", 5.0);
             totalRounds = intent.getIntExtra("totalRounds", 4);
             profileId = intent.getStringExtra("profileId");
+            if (profileId == null) profileId = "";
             currentRound = intent.getIntExtra("currentRound", 1);
             isWorkPhase = intent.getBooleanExtra("isWorkPhase", true);
             long phaseStartTimeMillis = intent.getLongExtra("phaseStartTimeMillis", System.currentTimeMillis());
-            phaseDurationSec = intent.getIntExtra("phaseDurationSec", workDurationMin * 60);
+            int providedPhaseDurationSec = intent.getIntExtra("phaseDurationSec", -1);
             activityTag = intent.getStringExtra("activityTag");
             if (activityTag == null) activityTag = "";
 
+            workDurationSec = (int)(workDurationMin * 60);
+            breakDurationSec = (int)(breakDurationMin * 60);
+            
+            if (providedPhaseDurationSec > 0) {
+                phaseDurationSec = providedPhaseDurationSec;
+            } else {
+                phaseDurationSec = isWorkPhase ? workDurationSec : breakDurationSec;
+            }
+
             phaseEndTimeMillis = phaseStartTimeMillis + (phaseDurationSec * 1000L);
             isActive = true;
+            pendingLog = null;
 
             startForeground(NOTIFICATION_ID, createNotification());
             startUpdateLoop();
-        } else if (ACTION_STOP.equals(action)) {
+        } else if (ACTION_STOP_SESSION.equals(action)) {
             stopSession();
         }
 
@@ -99,18 +119,23 @@ public class PomodoroForegroundService extends Service {
     }
 
     private void handlePhaseEnd() {
+        // Vibrate
+        vibrate();
+        
         // Store pending log for the completed phase
         pendingLog = new JSObject();
         pendingLog.put("roundNumber", currentRound);
         pendingLog.put("phaseType", isWorkPhase ? "work" : "break");
 
+        // Show phase complete notification
+        showPhaseCompleteNotification();
+
         // Move to next phase or round
         if (isWorkPhase) {
             // Work phase ended
-            int breakDurationMin = 5; // Default, should be passed from intent
-            if (breakDurationMin > 0) {
+            if (breakDurationSec > 0) {
                 isWorkPhase = false;
-                phaseDurationSec = breakDurationMin * 60;
+                phaseDurationSec = breakDurationSec;
                 phaseEndTimeMillis = System.currentTimeMillis() + (phaseDurationSec * 1000L);
             } else {
                 // No break, move to next round
@@ -119,6 +144,9 @@ public class PomodoroForegroundService extends Service {
                     stopSession();
                     return;
                 }
+                isWorkPhase = true;
+                phaseDurationSec = workDurationSec;
+                phaseEndTimeMillis = System.currentTimeMillis() + (phaseDurationSec * 1000L);
             }
         } else {
             // Break phase ended
@@ -128,13 +156,49 @@ public class PomodoroForegroundService extends Service {
                 return;
             }
             isWorkPhase = true;
-            int workDurationMin = 25; // Default, should be passed from intent
-            phaseDurationSec = workDurationMin * 60;
+            phaseDurationSec = workDurationSec;
             phaseEndTimeMillis = System.currentTimeMillis() + (phaseDurationSec * 1000L);
         }
 
         // Continue the loop
         startUpdateLoop();
+    }
+
+    private void vibrate() {
+        Vibrator v;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            VibratorManager vm = (VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+            v = vm.getDefaultVibrator();
+        } else {
+            v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        }
+        if (v != null && v.hasVibrator()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                v.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
+            } else {
+                v.vibrate(500);
+            }
+        }
+    }
+
+    private void showPhaseCompleteNotification() {
+        String title = isWorkPhase ? "Work phase complete" : "Break complete";
+        String body = "Round " + currentRound + "/" + totalRounds + " – Tap to log";
+        Intent open = new Intent(this, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        open.putExtra("pomodoro_open_log", true);
+        PendingIntent pi = PendingIntent.getActivity(this, (int) System.currentTimeMillis(), open,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification notif = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build();
+        NotificationManager notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        notificationManager.notify(1000 + currentRound, notif);
     }
 
     private void stopSession() {
@@ -205,23 +269,30 @@ public class PomodoroForegroundService extends Service {
     }
 
     // Static methods to access state from the plugin
-    public static JSObject getCurrentState() {
-        JSObject state = new JSObject();
-        state.put("isActive", isActive);
-        if (isActive) {
-            state.put("profileId", profileId);
-            state.put("totalRounds", totalRounds);
-            state.put("currentRound", currentRound);
-            state.put("isWorkPhase", isWorkPhase);
-            state.put("phaseEndTimeMillis", phaseEndTimeMillis);
-            long now = System.currentTimeMillis();
-            long timeRemainingMs = Math.max(0, phaseEndTimeMillis - now);
-            state.put("timeRemainingSec", (int) (timeRemainingMs / 1000));
-            state.put("phaseDurationSec", phaseDurationSec);
-            state.put("activityTag", activityTag);
-            if (pendingLog != null) {
-                state.put("pendingLog", pendingLog);
+    public static JSONObject getSessionState() {
+        JSONObject state = new JSONObject();
+        try {
+            state.put("isActive", isActive);
+            if (isActive) {
+                state.put("profileId", profileId);
+                state.put("totalRounds", totalRounds);
+                state.put("currentRound", currentRound);
+                state.put("isWorkPhase", isWorkPhase);
+                state.put("phaseEndTimeMillis", phaseEndTimeMillis);
+                long now = System.currentTimeMillis();
+                long timeRemainingMs = Math.max(0, phaseEndTimeMillis - now);
+                state.put("timeRemainingSec", (int) (timeRemainingMs / 1000));
+                state.put("phaseDurationSec", phaseDurationSec);
+                state.put("activityTag", activityTag);
+                if (pendingLog != null) {
+                    JSONObject pendingLogJson = new JSONObject();
+                    pendingLogJson.put("roundNumber", pendingLog.getInt("roundNumber"));
+                    pendingLogJson.put("phaseType", pendingLog.getString("phaseType"));
+                    state.put("pendingLog", pendingLogJson);
+                }
             }
+        } catch (JSONException e) {
+            e.printStackTrace();
         }
         return state;
     }

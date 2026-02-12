@@ -49,7 +49,7 @@ export async function exportLogs(logs: SessionLog[]): Promise<void> {
     path: fileName,
     data: csv,
     directory: Directory.Documents,
-    encoding: 'utf8',
+    encoding: 'utf8' as any,
   });
 
   await Share.share({
