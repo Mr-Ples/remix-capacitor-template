@@ -39,78 +39,82 @@ export function LoggingModal({
     setActivityTag('');
   };
 
-
   return (
-    <div className="modal-overlay">
-      <div className="modal">
-        <div className="modal-header">
-          <h2 className="modal-title">
-            {phaseType === 'work' ? 'Work Phase Complete' : 'Break Complete'}
-          </h2>
-        </div>
-
-        <p className="text-secondary mb-3">
-          Round {roundNumber} of {totalRounds}
-        </p>
-
-        {profile.activityTags && profile.activityTags.length > 0 && (
-          <div className="input-group">
-            <label className="label">Activity Tag</label>
-            <select
-              className="select"
-              value={activityTag}
-              onChange={(e) => setActivityTag(e.target.value)}
-            >
-              <option value="">None</option>
-              {profile.activityTags.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
-            </select>
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 bg-background/80 backdrop-blur-sm transition-all duration-300">
+      <div
+        className="glass-card w-full max-w-lg overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-500"
+      >
+        <div className="p-6 sm:p-8 space-y-6 max-h-[90vh] overflow-y-auto">
+          <div className="space-y-1">
+            <h2 className="text-xl font-display font-bold">
+              {phaseType === 'work' ? 'Work Phase Complete' : 'Break Complete'}
+            </h2>
+            <p className="text-sm text-mutedForeground">
+              Round <span className="text-foreground">{roundNumber}</span> of {totalRounds}
+            </p>
           </div>
-        )}
 
-        <div className="input-group">
-          <label className="label">Notes</label>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="What did you accomplish? Any thoughts?"
-            rows={4}
-          />
-        </div>
-
-        {relevantQuestions.map((question) => (
-          <div key={question.id} className="input-group">
-            <label className="label">{question.text}</label>
-            <div className="radio-group">
-              {question.options.map((option) => (
-                <label
-                  key={option}
-                  className={`radio-option ${answers[question.id] === option ? 'selected' : ''
-                    }`}
+          <div className="space-y-6">
+            {profile.activityTags && profile.activityTags.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity</label>
+                <select
+                  className="input-field w-full appearance-none cursor-pointer"
+                  value={activityTag}
+                  onChange={(e) => setActivityTag(e.target.value)}
                 >
-                  <input
-                    type="radio"
-                    name={question.id}
-                    value={option}
-                    checked={answers[question.id] === option}
-                    onChange={(e) =>
-                      setAnswers({ ...answers, [question.id]: e.target.value })
-                    }
-                  />
-                  <span>{option}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
+                  <option value="">None</option>
+                  {profile.activityTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-        <div className="modal-actions">
-          <button className="btn btn-primary" onClick={handleSubmit}>
-            Save Log
-          </button>
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Notes</label>
+              <textarea
+                className="input-field w-full h-24 py-3 resize-none"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="What did you accomplish? Any thoughts?"
+              />
+            </div>
+
+            {relevantQuestions.map((question) => (
+              <div key={question.id} className="space-y-3">
+                <label className="text-sm font-medium px-1">{question.text}</label>
+                <div className="grid grid-cols-1 gap-2">
+                  {question.options.map((option) => (
+                    <button
+                      key={option}
+                      className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200 ${answers[question.id] === option
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-white/5 bg-white/5 text-mutedForeground hover:bg-white/10'
+                        }`}
+                      onClick={() => setAnswers({ ...answers, [question.id]: option })}
+                    >
+                      <span className="text-sm">{option}</span>
+                      {answers[question.id] === option && (
+                        <div className="w-2 h-2 rounded-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="pt-4">
+            <button
+              className="btn-primary w-full py-4 text-lg"
+              onClick={handleSubmit}
+            >
+              Save Session Log
+            </button>
+          </div>
         </div>
       </div>
     </div>

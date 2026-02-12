@@ -57,7 +57,12 @@ export class SessionController {
   }
 
   private emit(event: SessionEvent) {
-    this.listeners.forEach(listener => listener(event));
+    // Always emit a shallow clone of the state to ensure React detects the change
+    const stateClone = this.state ? { ...this.state } : null;
+    this.listeners.forEach(listener => listener({
+      ...event,
+      state: stateClone as SessionState
+    }));
   }
 
   async startSession(profile: Profile, activityTag?: string): Promise<void> {
@@ -281,6 +286,38 @@ export class SessionController {
     }
   }
 
+  async unpauseSession(): Promise<void> {
+    if (this.state && !this.state.isActive && this.profile) {
+      // Adjust startTime to account for the time spent paused
+      // New StartTime = CurrentTime - ElapsedTime
+      const now = Date.now();
+      this.state.startTime = now - (this.state.elapsedTime * 1000);
+      this.state.isActive = true;
+      delete this.state.pausedAt;
+
+      await StorageService.saveSessionState(this.state);
+
+      // Restart native foreground service on Android
+      if (this.useNativeService) {
+        await PomodoroService.startSession({
+          workDurationMin: this.profile.workDuration,
+          breakDurationMin: this.profile.breakDuration,
+          totalRounds: this.state.totalRounds,
+          profileId: this.profile.id,
+          currentRound: this.state.currentRound,
+          isWorkPhase: this.state.isWorkPhase,
+          phaseStartTimeMillis: this.state.startTime,
+          phaseDurationSec: this.state.phaseDuration,
+          activityTag: this.state.currentActivityTag,
+        }).catch(() => { });
+      }
+
+      this.startTimer();
+      this.startOngoingNotification();
+      this.emit({ type: 'stateChange', state: this.state });
+    }
+  }
+
   async stopSession(): Promise<void> {
     // Stop native foreground service on Android
     if (this.useNativeService) {
@@ -339,6 +376,7 @@ export class SessionController {
         this.handlePhaseEnd();
       } else {
         StorageService.saveSessionState(this.state);
+        // Explicitly emit stateChange toggle if needed, or just tick
         this.emit({ type: 'tick', state: this.state });
       }
     }, 1000);

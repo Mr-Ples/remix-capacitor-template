@@ -132,7 +132,11 @@ export function PomodoroTimer() {
 
   const handleStartSession = async () => {
     if (!profile || !controllerRef.current) return;
-    await controllerRef.current.startSession(profile, selectedActivityTag || undefined);
+    if (sessionState && !sessionState.isActive) {
+      await controllerRef.current.unpauseSession();
+    } else {
+      await controllerRef.current.startSession(profile, selectedActivityTag || undefined);
+    }
   };
 
   const handleActivityTagChange = (tag: string) => {
@@ -325,141 +329,158 @@ export function PomodoroTimer() {
   const isSessionActive = sessionState && sessionState.isActive;
 
   return (
-    <div className="container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '32px', fontWeight: '700', margin: 0 }}>
-          🍅 Pomodoro Plus
+    <div className="max-w-xl mx-auto px-4 py-12 space-y-8">
+      {/* Header */}
+      <div className="flex justify-between items-center bg-transparent">
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/50 bg-clip-text text-transparent">
+          Pomodoro Plus
         </h1>
         <button
-          className="btn btn-secondary"
+          className="btn-secondary px-4 py-2 text-sm"
           onClick={() => setShowLogsView(true)}
         >
-          View Logs
+          Logs
         </button>
       </div>
 
-      {!isSessionActive && (
-        <ProfileManager
-          currentProfile={profile}
-          onProfileChange={handleProfileChange}
-        />
+      {!sessionState && (
+        <div className="glass-card p-6">
+          <ProfileManager
+            currentProfile={profile}
+            onProfileChange={handleProfileChange}
+          />
+        </div>
       )}
 
-      <div className="card text-center">
+      {/* Main Timer Section */}
+      <div className="glass-card p-8 flex flex-col items-center">
         {sessionState ? (
-          <>
-            <div className="mb-3">
-              <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                Round {sessionState.currentRound} of {sessionState.totalRounds}
-              </div>
-              <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>
-                {sessionState.isWorkPhase ? 'Work Session' : 'Break Time'}
-              </div>
-              <div style={{ fontSize: '72px', fontWeight: '700', marginBottom: '16px' }}>
-                {formatTime(timeRemaining)}
-              </div>
-              <div style={{
-                width: '100%',
-                height: '12px',
-                backgroundColor: 'var(--surface-light)',
-                borderRadius: '6px',
-                overflow: 'hidden',
-                marginBottom: '16px'
-              }}>
-                <div style={{
-                  width: `${getProgressPercentage()}%`,
-                  height: '100%',
-                  backgroundColor: sessionState.isWorkPhase ? 'var(--primary-color)' : 'var(--success-color)',
-                  transition: 'width 0.3s ease'
-                }} />
-              </div>
+          <div className="w-full space-y-8 flex flex-col items-center">
+            {/* Round Progress Bar */}
+            <div className="relative w-72 h-72 flex items-center justify-center">
+              <svg className="w-full h-full transform -rotate-90 overflow-visible">
+                {/* Background Circle */}
+                <circle
+                  cx="144"
+                  cy="144"
+                  r="130"
+                  fill="transparent"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  className="text-white/5"
+                />
+                {/* Progress Circle */}
+                <circle
+                  cx="144"
+                  cy="144"
+                  r="130"
+                  fill="transparent"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  strokeDasharray={2 * Math.PI * 130}
+                  strokeDashoffset={2 * Math.PI * 130 * (1 - getProgressPercentage() / 100)}
+                  strokeLinecap="round"
+                  className={`${sessionState.isWorkPhase ? 'text-accent' : 'text-green-500'} transition-all duration-300`}
+                  style={{ filter: 'drop-shadow(0 0 12px currentColor)' }}
+                />
+              </svg>
 
-              {profile.activityTags && profile.activityTags.length > 0 && (
-                <div style={{ marginBottom: '16px' }}>
-                  <label className="label" style={{ fontSize: '14px', marginBottom: '8px' }}>Activity</label>
-                  <select
-                    className="select"
-                    value={sessionState.currentActivityTag || ''}
-                    onChange={(e) => handleActivityTagChange(e.target.value)}
-                    style={{ width: '100%' }}
-                  >
-                    <option value="">None</option>
-                    {profile.activityTags.map((tag) => (
-                      <option key={tag} value={tag}>
-                        {tag}
-                      </option>
-                    ))}
-                  </select>
+              <div className="absolute inset-0 flex flex-col items-center justify-center space-y-1">
+                <span className="text-6xl font-display font-medium tabular-nums">
+                  {formatTime(timeRemaining)}
+                </span>
+                <span className="text-sm font-medium text-mutedForeground tracking-widest uppercase">
+                  {sessionState.isWorkPhase ? 'Work' : 'Break'}
+                </span>
+              </div>
+            </div>
+
+            <div className="text-center space-y-1">
+              <p className="text-sm text-mutedForeground">
+                Round <span className="text-foreground font-medium">{sessionState.currentRound}</span> of <span className="text-foreground font-medium">{sessionState.totalRounds}</span>
+              </p>
+            </div>
+
+            {profile.activityTags && profile.activityTags.length > 0 && (
+              <div className="w-full max-w-xs transition-all">
+                <select
+                  className="input-field w-full appearance-none text-center cursor-pointer"
+                  value={sessionState.currentActivityTag || ''}
+                  onChange={(e) => handleActivityTagChange(e.target.value)}
+                >
+                  <option value="">No Activity Selected</option>
+                  {profile.activityTags.map((tag) => (
+                    <option key={tag} value={tag}>
+                      {tag}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-4">
                   {renderGoalProgress(sessionState.currentActivityTag)}
                 </div>
-              )}
-            </div>
-
-            <div className="flex gap-2 justify-center">
-              {sessionState.isActive ? (
-                <button className="btn btn-warning btn-large" onClick={handlePauseSession}>
-                  Pause
-                </button>
-              ) : (
-                <button className="btn btn-success btn-large" onClick={handleStartSession}>
-                  Resume
-                </button>
-              )}
-              <button className="btn btn-danger" onClick={handleStopSession}>
-                Stop
-              </button>
-            </div>
-
-            <div className="mt-3 text-secondary" style={{ fontSize: '14px' }}>
-              {sessionState && (
-                <div>
-                  Total session time: {sessionState.totalRounds} × ({profile.workDuration} + {profile.breakDuration}) ={' '}
-                  {sessionState.totalRounds * (profile.workDuration + profile.breakDuration)} minutes
-                </div>
-              )}
-              <div className="mt-1">
-                Time remaining in session: {' '}
-                {Math.floor(
-                  ((sessionState.totalRounds - sessionState.currentRound) *
-                    (profile.workDuration + profile.breakDuration) +
-                    timeRemaining / 60)
-                )} minutes
               </div>
+            )}
+
+            {!profile.useEndTime && (
+              <div className="flex gap-4 w-full pt-4">
+                {sessionState.isActive ? (
+                  <button className="btn-primary flex-1" onClick={handlePauseSession}>
+                    Pause
+                  </button>
+                ) : (
+                  <button className="btn-primary flex-1" onClick={handleStartSession}>
+                    Resume
+                  </button>
+                )}
+                <button
+                  className="btn-secondary px-6"
+                  onClick={handleStopSession}
+                >
+                  Stop
+                </button>
+              </div>
+            )}
+
+            {profile.useEndTime && (
+              <div className="w-full pt-4">
+                <button
+                  className="btn-secondary w-full"
+                  onClick={handleStopSession}
+                >
+                  Stop Session
+                </button>
+              </div>
+            )}
+
+            <div className="pt-4 text-xs text-mutedForeground text-center space-y-1 opacity-50">
+              <p>Session: {sessionState.totalRounds * (profile.workDuration + profile.breakDuration)} min</p>
+              <p>Remaining: {Math.floor(
+                ((sessionState.totalRounds - sessionState.currentRound) *
+                  (profile.workDuration + profile.breakDuration) +
+                  timeRemaining / 60)
+              )} min</p>
             </div>
-          </>
+          </div>
         ) : (
-          <>
-            <div className="mb-4">
-              <div style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>
-                Ready to Start?
-              </div>
+          <div className="w-full space-y-8 flex flex-col items-center py-4">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-medium">Ready to Start?</h2>
               {profile.useEndTime && profile.endTime ? (
-                <>
-                  <div className="text-secondary" style={{ fontSize: '14px' }}>
-                    Session will run until {profile.endTime} using rounds of{' '}
-                    {profile.workDuration} min work + {profile.breakDuration} min break.
-                  </div>
-                  <div className="text-secondary" style={{ fontSize: '14px' }}>
-                    Rounds are calculated when you tap Start based on the current time.
-                  </div>
-                </>
+                <p className="text-mutedForeground text-sm max-w-xs">
+                  Running until <span className="text-foreground">{profile.endTime}</span> with {profile.workDuration}/{profile.breakDuration} rounds.
+                </p>
               ) : (
-                <>
-                  <div className="text-secondary" style={{ fontSize: '14px' }}>
-                    {profile.rounds} rounds × ({profile.workDuration} min work + {profile.breakDuration} min break)
-                  </div>
-                  <div className="text-secondary" style={{ fontSize: '14px' }}>
-                    Total duration: {profile.rounds * (profile.workDuration + profile.breakDuration)} minutes
-                  </div>
-                </>
+                <p className="text-mutedForeground text-sm max-w-xs">
+                  <span className="text-foreground">{profile.rounds}</span> rounds of {profile.workDuration}/{profile.breakDuration} min sessions.
+                </p>
               )}
             </div>
 
             {profile.activityTags && profile.activityTags.length > 0 && (
-              <div className="input-group mb-3">
-                <label className="label">Activity (optional)</label>
+              <div className="w-full max-w-xs space-y-2">
+                <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity</label>
                 <select
-                  className="select"
+                  className="input-field w-full appearance-none cursor-pointer"
                   value={selectedActivityTag}
                   onChange={(e) => setSelectedActivityTag(e.target.value)}
                 >
@@ -470,16 +491,73 @@ export function PomodoroTimer() {
                     </option>
                   ))}
                 </select>
-                {renderGoalProgress(selectedActivityTag)}
+                <div className="pt-2">
+                  {renderGoalProgress(selectedActivityTag)}
+                </div>
               </div>
             )}
 
-            <button className="btn btn-primary btn-large" onClick={handleStartSession}>
+            <button className="btn-primary w-full max-w-xs text-lg" onClick={handleStartSession}>
               Start Session
             </button>
-          </>
+          </div>
         )}
       </div>
+
+      {/* Daily Goals Overview */}
+      {profile && profile.goals && Object.keys(profile.goals).length > 0 && (
+        <div className="glass-card p-6 space-y-6">
+          <h3 className="text-lg font-medium border-b border-white/5 pb-4">Daily Goals</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+            {Object.entries(profile.goals || {}).map(([tag, rawTarget]) => {
+              const completed = getCompletedRoundsForTag(tag);
+              const target = resolveGoalTarget(rawTarget);
+              const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
+              const isMet = completed >= target;
+
+              return (
+                <div key={tag} className="flex flex-col items-center space-y-3 p-2 group">
+                  <div className="relative w-20 h-20 flex items-center justify-center">
+                    <svg className="w-full h-full transform -rotate-90 overflow-visible">
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r="36"
+                        fill="transparent"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        className="text-white/5"
+                      />
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r="36"
+                        fill="transparent"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        strokeDasharray={2 * Math.PI * 36}
+                        strokeDashoffset={2 * Math.PI * 36 * (1 - percent / 100)}
+                        strokeLinecap="round"
+                        className={`${isMet ? 'text-green-500' : 'text-accent'} transition-all duration-500 ease-out`}
+                        style={{ filter: 'drop-shadow(0 0 6px currentColor)' }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-sm font-medium tabular-nums">
+                        {completed}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xs font-medium truncate w-24" title={tag}>{tag}</p>
+                    <p className="text-[10px] text-mutedForeground">Goal: {target}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {showLoggingModal && sessionState && (
         <LoggingModal
@@ -503,50 +581,6 @@ export function PomodoroTimer() {
         onDataChange={loadSessionLogs}
         defaultProfileId={profile?.id}
       />
-
-      {/* Daily Goals Overview */}
-      {profile && profile.goals && Object.keys(profile.goals).length > 0 && (
-        <div className="card mt-4">
-          <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px' }}>Daily Goals</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {Object.entries(profile.goals || {}).map(([tag, rawTarget]) => {
-              const completed = getCompletedRoundsForTag(tag);
-              const target = resolveGoalTarget(rawTarget);
-
-              // Avoid division by zero
-              const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
-              const isMet = completed >= target;
-              const isPercentage = typeof rawTarget === 'string' && rawTarget.endsWith('%');
-
-              return (
-                <div key={tag}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '14px' }}>
-                    <span style={{ fontWeight: '500' }}>{tag}</span>
-                    <span style={{ color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
-                      {completed} / {target} {isMet && '✓'}
-                      {isPercentage && <span style={{ opacity: 0.7, marginLeft: '4px' }}>({rawTarget})</span>}
-                    </span>
-                  </div>
-                  <div style={{
-                    width: '100%',
-                    height: '8px',
-                    backgroundColor: 'var(--surface-light)',
-                    borderRadius: '4px',
-                    overflow: 'hidden'
-                  }}>
-                    <div style={{
-                      width: `${percent}%`,
-                      height: '100%',
-                      backgroundColor: isMet ? 'var(--success-color)' : 'var(--primary-color)',
-                      transition: 'width 0.3s ease'
-                    }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

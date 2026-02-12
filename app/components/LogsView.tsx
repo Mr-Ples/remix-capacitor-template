@@ -14,7 +14,7 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
   const [logs, setLogs] = useState<SessionLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('all');
-  const [selectedDate, setSelectedDate] = useState<string>(''); // empty means all dates
+  const [selectedDate, setSelectedDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<SessionLog | null>(null);
@@ -31,7 +31,7 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
     profileId: '',
     roundNumber: 1,
     phaseType: 'work',
-    phaseEndTime: new Date().toISOString().slice(0, 16), // Format for datetime-local
+    phaseEndTime: new Date().toISOString().slice(0, 16),
     notes: '',
     answers: {},
   });
@@ -43,6 +43,12 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
       if (defaultProfileId) {
         setSelectedProfileId(defaultProfileId);
       }
+      // Prevent background scroll
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
     }
   }, [isOpen]);
 
@@ -50,17 +56,10 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
     if (!silent) setLoading(true);
     const loadedLogs = await StorageService.getSessionLogs();
     const loadedProfiles = await StorageService.getProfiles();
-
-    // Sort logs by date, most recent first
-    loadedLogs.sort((a, b) =>
-      new Date(b.phaseEndTime).getTime() - new Date(a.phaseEndTime).getTime()
-    );
-
+    loadedLogs.sort((a, b) => new Date(b.phaseEndTime).getTime() - new Date(a.phaseEndTime).getTime());
     setLogs(loadedLogs);
     setProfiles(loadedProfiles);
     setLoading(false);
-
-    // Initialize new entry profile if not set
     if (!newEntryData.profileId && loadedProfiles.length > 0) {
       setNewEntryData(prev => ({ ...prev, profileId: loadedProfiles[0].id }));
     }
@@ -69,15 +68,11 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
   const handleClearLogs = async () => {
     const filteredLogs = getFilteredLogs();
     if (filteredLogs.length === 0) return;
-
     const filteredIds = new Set(filteredLogs.map(log => log.id));
     const updatedLogs = logs.filter(log => !filteredIds.has(log.id));
-
-    // if (confirm(`Are you sure you want to clear the ${filteredLogs.length} visible logs? This cannot be undone.`)) {
     await StorageService.saveSessionLogs(updatedLogs);
     await loadLogs();
     onDataChange?.();
-    // }
   };
 
   const getProfileName = (profileId: string): string => {
@@ -101,16 +96,11 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
 
   const handleExportLogs = async () => {
     const logsToExport = getFilteredLogs();
-    if (logsToExport.length === 0) {
-      console.warn('No logs to export for the selected profile.');
-      return;
-    }
-
+    if (logsToExport.length === 0) return;
     try {
       await exportLogs(logsToExport);
     } catch (error) {
       console.error('Error exporting logs', error);
-      console.error('Failed to export logs. Please try again.');
     }
   };
 
@@ -119,14 +109,8 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
     setEditFormData({ ...log });
   };
 
-  const handleCancelEdit = () => {
-    setEditingLogId(null);
-    setEditFormData(null);
-  };
-
   const handleSaveEdit = async () => {
     if (!editFormData) return;
-
     await StorageService.updateSessionLog(editFormData);
     await loadLogs(true);
     onDataChange?.();
@@ -134,48 +118,30 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
     setEditFormData(null);
   };
 
+  const handleUpdateAnswer = (questionId: string, answer: string) => {
+    if (!editFormData) return;
+    setEditFormData({
+      ...editFormData,
+      answers: {
+        ...editFormData.answers,
+        [questionId]: answer
+      }
+    });
+  };
+
   const handleDeleteLog = async (logId: string) => {
-    // if (confirm('Are you sure you want to delete this log entry?')) {
     const updatedLogs = logs.filter(log => log.id !== logId);
     await StorageService.saveSessionLogs(updatedLogs);
     await loadLogs();
     onDataChange?.();
-    // }
-  };
-
-  const handleAddEntryClick = () => {
-    setIsAddingEntry(true);
-    setNewEntryData({
-      profileId: profiles.length > 0 ? profiles[0].id : '',
-      roundNumber: 1,
-      phaseType: 'work',
-      phaseEndTime: new Date().toISOString().slice(0, 16),
-      notes: '',
-      answers: {},
-    });
   };
 
   const handleSaveNewEntry = async () => {
     if (!newEntryData.profileId) return;
-
-    // Check for duplicates
-    const entryDate = new Date(newEntryData.phaseEndTime).toLocaleDateString();
-    const isDuplicate = logs.some(log =>
-      log.profileId === newEntryData.profileId &&
-      log.roundNumber === newEntryData.roundNumber &&
-      log.phaseType === newEntryData.phaseType &&
-      new Date(log.phaseEndTime).toLocaleDateString() === entryDate
-    );
-
-    if (isDuplicate) {
-      alert('A log entry for this profile, round, and phase already exists for this date.');
-      return;
-    }
-
     const logEntry: SessionLog = {
       id: Date.now().toString(),
       profileId: newEntryData.profileId,
-      sessionStartTime: newEntryData.phaseEndTime, // Approximation
+      sessionStartTime: newEntryData.phaseEndTime,
       roundNumber: newEntryData.roundNumber,
       phaseType: newEntryData.phaseType,
       phaseEndTime: newEntryData.phaseEndTime,
@@ -183,7 +149,6 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
       answers: newEntryData.answers,
       activityTag: newEntryData.activityTag,
     };
-
     await StorageService.addSessionLog(logEntry);
     await loadLogs(true);
     onDataChange?.();
@@ -191,455 +156,270 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
   };
 
   if (!isOpen) return null;
-
   const filteredLogs = getFilteredLogs();
 
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  };
-
-  const selectedNewEntryProfile = profiles.find(p => p.id === newEntryData.profileId);
-  const relevantQuestions = selectedNewEntryProfile?.questions.filter(
-    q => q.type === newEntryData.phaseType || q.type === 'both'
-  ) || [];
-
   return (
-    <div
-      className="modal-overlay"
-      onClick={handleOverlayClick}
-      onKeyDown={handleKeyDown}
-      role="button"
-      tabIndex={-1}
-      aria-label="Close modal"
-    >
-      <div
-        className="modal"
-        style={{ maxWidth: '800px', maxHeight: '90vh', overflow: 'auto' }}
-        role="dialog"
-        aria-labelledby="logs-view-title"
-      >
-        <div className="modal-header">
-          <h2 className="modal-title" id="logs-view-title">Session Logs</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
+    <div className="fixed inset-0 z-[100] flex flex-col p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-300">
+      <div className="glass-card w-full max-w-4xl mx-auto flex-1 flex flex-col overflow-hidden">
+        <div className="p-6 border-b border-white/5 flex justify-between items-center">
+          <h2 className="text-2xl font-display font-bold">Session Logs</h2>
+          <button className="text-3xl leading-none text-mutedForeground hover:text-foreground" onClick={onClose}>×</button>
         </div>
 
-        <div className="mb-3">
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: '200px' }}>
-              <label className="label" htmlFor="profile-filter">Filter by Profile</label>
+        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+          {/* Filters and Actions */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Profile</label>
               <select
-                id="profile-filter"
-                className="select"
+                className="input-field w-full appearance-none cursor-pointer"
                 value={selectedProfileId}
                 onChange={(e) => setSelectedProfileId(e.target.value)}
               >
                 <option value="all">All Profiles</option>
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
+                {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            <div style={{ flex: 1, minWidth: '200px' }}>
-              <label className="label" htmlFor="date-filter">Filter by Date</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Date</label>
+              <div className="flex gap-2">
                 <input
-                  id="date-filter"
                   type="date"
-                  className="input"
+                  className="input-field flex-1"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  style={{ flex: 1 }}
                 />
                 {selectedDate && (
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => setSelectedDate('')}
-                    style={{ padding: '0 12px' }}
-                  >
-                    Clear
-                  </button>
+                  <button className="btn-secondary px-3" onClick={() => setSelectedDate('')}>×</button>
                 )}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-              <button
-                className="btn btn-success"
-                onClick={handleAddEntryClick}
-              >
-                Add Entry
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={handleExportLogs}
-                disabled={logs.length === 0}
-              >
-                Export
-              </button>
-              <button
-                className="btn btn-danger"
-                onClick={handleClearLogs}
-                disabled={filteredLogs.length === 0}
-              >
-                {selectedProfileId === 'all' && !selectedDate ? 'Clear All Logs' : 'Clear Filtered'}
-              </button>
+            <div className="flex items-end gap-2">
+              <button className="btn-primary flex-1 py-2 text-sm" onClick={() => setIsAddingEntry(true)}>Add</button>
+              <button className="btn-secondary flex-1 py-2 text-sm" onClick={handleExportLogs}>Export</button>
+              <button className="btn-secondary flex-1 py-2 text-sm text-red-400 border-red-500/20" onClick={handleClearLogs}>Clear</button>
             </div>
           </div>
-        </div>
 
-        {isAddingEntry ? (
-          <div className="card" style={{ border: '2px solid var(--success-color)' }}>
-            <h3 style={{ marginBottom: '16px' }}>Add Manual Entry</h3>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div className="input-group">
-                <label className="label">Profile</label>
-                <select
-                  className="select"
-                  value={newEntryData.profileId}
-                  onChange={(e) => setNewEntryData({ ...newEntryData, profileId: e.target.value, answers: {}, activityTag: undefined })}
-                >
-                  {profiles.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+          {isAddingEntry && (
+            <div className="p-6 rounded-xl bg-accent/5 border border-accent/20 space-y-4 animate-in zoom-in-95 duration-200">
+              <h3 className="font-medium">Add Manual Entry</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Profile</label>
+                  <select
+                    className="input-field w-full h-9 text-xs"
+                    value={newEntryData.profileId}
+                    onChange={(e) => {
+                      const pId = e.target.value;
+                      setNewEntryData({ ...newEntryData, profileId: pId, answers: {} });
+                    }}
+                  >
+                    {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Time</label>
+                  <input
+                    type="datetime-local"
+                    className="input-field w-full h-9 text-xs"
+                    value={newEntryData.phaseEndTime}
+                    onChange={(e) => setNewEntryData({ ...newEntryData, phaseEndTime: e.target.value })}
+                  />
+                </div>
               </div>
 
-              <div className="input-group">
-                <label className="label">Date & Time</label>
-                <input
-                  type="datetime-local"
-                  className="input"
-                  value={newEntryData.phaseEndTime}
-                  onChange={(e) => setNewEntryData({ ...newEntryData, phaseEndTime: e.target.value })}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Phase</label>
+                  <select
+                    className="input-field w-full h-9 text-xs"
+                    value={newEntryData.phaseType}
+                    onChange={(e) => setNewEntryData({ ...newEntryData, phaseType: e.target.value as 'work' | 'break', answers: {} })}
+                  >
+                    <option value="work">Work</option>
+                    <option value="break">Break</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Round</label>
+                  <input
+                    type="number"
+                    className="input-field w-full h-9 text-xs text-right"
+                    min="1"
+                    value={newEntryData.roundNumber}
+                    onChange={(e) => setNewEntryData({ ...newEntryData, roundNumber: parseInt(e.target.value) || 1 })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Notes</label>
+                <textarea
+                  className="input-field w-full h-16 text-xs resize-none"
+                  placeholder="Optional session notes..."
+                  value={newEntryData.notes}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, notes: e.target.value })}
                 />
               </div>
 
-              <div className="input-group">
-                <label className="label">Round Number</label>
-                <input
-                  type="number"
-                  className="input"
-                  min="1"
-                  value={newEntryData.roundNumber}
-                  onChange={(e) => setNewEntryData({ ...newEntryData, roundNumber: parseInt(e.target.value) || 1 })}
-                />
-              </div>
+              {newEntryData.profileId && (() => {
+                const profile = profiles.find(p => p.id === newEntryData.profileId);
+                const relevantQuestions = profile?.questions.filter(q => q.type === newEntryData.phaseType || q.type === 'both');
+                if (!relevantQuestions || relevantQuestions.length === 0) return null;
 
-              <div className="input-group">
-                <label className="label">Phase Type</label>
-                <select
-                  className="select"
-                  value={newEntryData.phaseType}
-                  onChange={(e) => setNewEntryData({ ...newEntryData, phaseType: e.target.value as 'work' | 'break', answers: {} })}
-                >
-                  <option value="work">Work</option>
-                  <option value="break">Break</option>
-                </select>
-              </div>
-            </div>
-
-            {selectedNewEntryProfile?.activityTags && selectedNewEntryProfile.activityTags.length > 0 && (
-              <div className="input-group">
-                <label className="label">Activity Tag</label>
-                <select
-                  className="select"
-                  value={newEntryData.activityTag || ''}
-                  onChange={(e) => setNewEntryData({ ...newEntryData, activityTag: e.target.value || undefined })}
-                >
-                  <option value="">None</option>
-                  {selectedNewEntryProfile.activityTags.map(tag => (
-                    <option key={tag} value={tag}>{tag}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="input-group">
-              <label className="label">Notes</label>
-              <textarea
-                className="textarea"
-                rows={3}
-                value={newEntryData.notes}
-                onChange={(e) => setNewEntryData({ ...newEntryData, notes: e.target.value })}
-                placeholder="Add notes..."
-              />
-            </div>
-
-            {relevantQuestions.length > 0 && (
-              <div style={{ marginBottom: '16px' }}>
-                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Questions:</div>
-                {relevantQuestions.map(q => (
-                  <div key={q.id} className="input-group mb-2">
-                    <label className="label" style={{ fontSize: '13px' }}>{q.text}</label>
-                    <select
-                      className="select"
-                      value={newEntryData.answers[q.id] || ''}
-                      onChange={(e) => setNewEntryData({
-                        ...newEntryData,
-                        answers: { ...newEntryData.answers, [q.id]: e.target.value }
-                      })}
-                    >
-                      <option value="">-- Select --</option>
-                      {q.options.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setIsAddingEntry(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-success" onClick={handleSaveNewEntry}>
-                Save Entry
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="text-center" style={{ padding: '40px' }}>
-            Loading logs...
-          </div>
-        ) : filteredLogs.length === 0 ? (
-          <div className="text-center text-secondary" style={{ padding: '40px' }}>
-            No logs found. Complete some sessions to see logs here.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {filteredLogs.map((log) => {
-              const isEditing = editingLogId === log.id;
-              const profile = profiles.find(p => p.id === log.profileId);
-
-              return (
-                <div key={log.id} className="card" style={{ marginBottom: 0 }}>
-                  {isEditing && editFormData ? (
-                    // Edit Mode
-                    <div>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        marginBottom: '16px'
-                      }}>
-                        <div>
-                          <div style={{ fontWeight: '600', fontSize: '16px', marginBottom: '4px' }}>
-                            Editing: {log.phaseType === 'work' ? 'Work Phase' : 'Break Phase'} - Round {log.roundNumber}
-                          </div>
-                          <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-                            {getProfileName(log.profileId)}
-                          </div>
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'right' }}>
-                          {formatDate(log.phaseEndTime)}
-                        </div>
-                      </div>
-
-                      {/* Activity Tag Editor */}
-                      {profile?.activityTags && profile.activityTags.length > 0 && (
-                        <div className="input-group mb-3">
-                          <label className="label" htmlFor={`edit-activity-${log.id}`}>Activity Tag</label>
-                          <select
-                            id={`edit-activity-${log.id}`}
-                            className="select"
-                            value={editFormData.activityTag || ''}
-                            onChange={(e) => setEditFormData({ ...editFormData, activityTag: e.target.value || undefined })}
-                          >
-                            <option value="">None</option>
-                            {profile.activityTags.map((tag) => (
-                              <option key={tag} value={tag}>
-                                {tag}
-                              </option>
+                return (
+                  <div className="space-y-3 pt-2 border-t border-accent/10">
+                    <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Questions</label>
+                    <div className="space-y-3">
+                      {relevantQuestions.map(q => (
+                        <div key={q.id} className="space-y-1">
+                          <p className="text-[11px] font-medium text-foreground/90">{q.text}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {q.options.map(opt => (
+                              <button
+                                key={opt}
+                                className={`px-2 py-1 rounded text-[9px] transition-all ${newEntryData.answers[q.id] === opt
+                                  ? 'bg-accent text-accentForeground font-bold'
+                                  : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                                  }`}
+                                onClick={() => setNewEntryData({
+                                  ...newEntryData,
+                                  answers: { ...newEntryData.answers, [q.id]: opt }
+                                })}
+                              >
+                                {opt}
+                              </button>
                             ))}
-                          </select>
-                        </div>
-                      )}
-
-                      {/* Notes Editor */}
-                      <div className="input-group mb-3">
-                        <label className="label" htmlFor={`edit-notes-${log.id}`}>Notes</label>
-                        <textarea
-                          id={`edit-notes-${log.id}`}
-                          className="textarea"
-                          value={editFormData.notes}
-                          onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
-                          rows={3}
-                          placeholder="Add notes..."
-                        />
-                      </div>
-
-                      {/* Answers Editor */}
-                      {profile?.questions && profile.questions.length > 0 && (
-                        <div style={{ marginBottom: '16px' }}>
-                          <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>
-                            Answers:
                           </div>
-                          {profile.questions.map((question) => {
-                            const currentAnswer = editFormData.answers[question.id] || '';
-
-                            return (
-                              <div key={question.id} className="input-group mb-2">
-                                <label className="label" style={{ fontSize: '13px' }} htmlFor={`edit-answer-${log.id}-${question.id}`}>
-                                  {question.text}
-                                </label>
-                                <select
-                                  id={`edit-answer-${log.id}-${question.id}`}
-                                  className="select"
-                                  value={currentAnswer}
-                                  onChange={(e) => setEditFormData({
-                                    ...editFormData,
-                                    answers: { ...editFormData.answers, [question.id]: e.target.value }
-                                  })}
-                                >
-                                  <option value="">-- Select --</option>
-                                  {question.options.map((option) => (
-                                    <option key={option} value={option}>
-                                      {option}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            );
-                          })}
                         </div>
-                      )}
-
-                      {/* Edit Actions */}
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button className="btn btn-secondary" onClick={handleCancelEdit}>
-                          Cancel
-                        </button>
-                        <button className="btn btn-primary" onClick={handleSaveEdit}>
-                          Save Changes
-                        </button>
-                      </div>
+                      ))}
                     </div>
-                  ) : (
-                    // View Mode
-                    <div>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        marginBottom: '12px'
-                      }}>
-                        <div>
-                          <div style={{ fontWeight: '600', fontSize: '16px', marginBottom: '4px' }}>
-                            {log.phaseType === 'work' ? 'Work Phase' : 'Break Phase'} - Round {log.roundNumber}
-                            {log.activityTag && (
-                              <span style={{
-                                marginLeft: '8px',
-                                padding: '2px 8px',
-                                backgroundColor: 'var(--primary-color)',
-                                color: 'white',
-                                borderRadius: '4px',
-                                fontSize: '14px',
-                                fontWeight: '500'
-                              }}>
-                                {log.activityTag}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-                            {getProfileName(log.profileId)}
+                  </div>
+                );
+              })()}
+
+              <div className="flex gap-3 pt-2">
+                <button className="btn-secondary flex-1 py-2 text-xs" onClick={() => setIsAddingEntry(false)}>Cancel</button>
+                <button className="btn-primary flex-1 py-2 text-xs" onClick={handleSaveNewEntry}>Save Entry</button>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="py-20 text-center text-mutedForeground animate-pulse">Loading logs...</div>
+          ) : filteredLogs.length === 0 ? (
+            <div className="py-20 text-center text-mutedForeground italic">No logs found matching filters.</div>
+          ) : (
+            <div className="space-y-4 pb-8">
+              {filteredLogs.map(log => {
+                const isEditing = editingLogId === log.id;
+                const profile = profiles.find(p => p.id === log.profileId);
+
+                return (
+                  <div key={log.id} className={`p-4 rounded-xl border transition-all ${isEditing ? 'border-accent bg-accent/5' : 'border-white/5 bg-white/5 hover:bg-white-[0.08]'}`}>
+                    {isEditing && editFormData ? (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center text-xs text-mutedForeground">
+                          <span>Editing Round {log.roundNumber} - {log.phaseType}</span>
+                          <div className="flex gap-4">
+                            <button onClick={() => setEditingLogId(null)} className="text-mutedForeground hover:text-foreground">Cancel</button>
+                            <button onClick={handleSaveEdit} className="text-accent font-bold">Save Changes</button>
                           </div>
                         </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'right' }}>
-                          {formatDate(log.phaseEndTime)}
+
+                        <div className="space-y-3">
+                          <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Notes</label>
+                          <textarea
+                            className="input-field w-full h-20 text-sm resize-none"
+                            value={editFormData.notes}
+                            onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                          />
                         </div>
+
+                        {profile && profile.questions.filter(q => q.type === log.phaseType || q.type === 'both').length > 0 && (
+                          <div className="space-y-4 pt-2 border-t border-white/5">
+                            <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Follow-up Questions</label>
+                            <div className="space-y-4">
+                              {profile.questions
+                                .filter(q => q.type === log.phaseType || q.type === 'both')
+                                .map(q => (
+                                  <div key={q.id} className="space-y-2">
+                                    <p className="text-xs font-medium text-foreground/90">{q.text}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {q.options.map(opt => (
+                                        <button
+                                          key={opt}
+                                          className={`px-3 py-1.5 rounded-lg text-[10px] transition-all ${editFormData.answers[q.id] === opt
+                                            ? 'bg-accent text-accentForeground font-bold shadow-glow-sm'
+                                            : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                                            }`}
+                                          onClick={() => handleUpdateAnswer(q.id, opt)}
+                                        >
+                                          {opt}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-
-                      {log.notes && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
-                            Notes:
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full uppercase font-bold tracking-wider ${log.phaseType === 'work' ? 'bg-accent/20 text-accent' : 'bg-green-500/20 text-green-400'}`}>
+                                {log.phaseType}
+                              </span>
+                              <span className="text-sm font-medium">Round {log.roundNumber}</span>
+                              {log.activityTag && (
+                                <span className="text-[10px] text-mutedForeground bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
+                                  {log.activityTag}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-mutedForeground">{getProfileName(log.profileId)}</p>
                           </div>
-                          <div style={{
-                            fontSize: '14px',
-                            color: 'var(--text-secondary)',
-                            whiteSpace: 'pre-wrap'
-                          }}>
-                            {log.notes}
-                          </div>
+                          <span className="text-[10px] tabular-nums text-mutedForeground opacity-60">{formatDate(log.phaseEndTime)}</span>
                         </div>
-                      )}
 
-                      {Object.keys(log.answers).length > 0 && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>
-                            Answers:
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {Object.entries(log.answers).map(([questionId, answer]) => {
-                              const question = profile?.questions.find(q => q.id === questionId);
-                              const questionText = question?.text || `Question ${questionId}`;
+                        {log.notes && (
+                          <p className="text-sm text-foreground/80 pl-2 border-l border-white/10 leading-relaxed italic line-clamp-2 hover:line-clamp-none transition-all">
+                            "{log.notes}"
+                          </p>
+                        )}
 
+                        <div className="flex justify-between items-end pt-2 gap-4">
+                          <div className="flex-1 space-y-2">
+                            {Object.entries(log.answers).map(([qid, ans]) => {
+                              const qText = profile?.questions.find(q => q.id === qid)?.text || "Question";
                               return (
-                                <div
-                                  key={questionId}
-                                  style={{
-                                    fontSize: '13px',
-                                    display: 'flex',
-                                    gap: '8px'
-                                  }}
-                                >
-                                  <span style={{ color: 'var(--text-secondary)' }}>
-                                    {questionText}:
-                                  </span>
-                                  <span style={{ fontWeight: '500' }}>
-                                    {answer}
-                                  </span>
+                                <div key={qid} className="flex flex-col gap-0.5">
+                                  <span className="text-[9px] uppercase tracking-wider text-mutedForeground/70">{qText}</span>
+                                  <span className="text-[11px] font-medium text-foreground/90">{ans}</span>
                                 </div>
                               );
                             })}
                           </div>
+                          <div className="flex gap-4 py-1 shrink-0">
+                            <button onClick={() => handleEditLog(log)} className="text-[10px] uppercase tracking-widest text-accent font-bold">Edit</button>
+                            <button onClick={() => handleDeleteLog(log.id)} className="text-[10px] uppercase tracking-widest text-red-400 font-bold">Delete</button>
+                          </div>
                         </div>
-                      )}
-
-                      {/* Action Buttons */}
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '12px' }}>
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => handleEditLog(log)}
-                          style={{ fontSize: '13px', padding: '4px 12px' }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn btn-danger"
-                          onClick={() => handleDeleteLog(log.id)}
-                          style={{ fontSize: '13px', padding: '4px 12px' }}
-                        >
-                          Delete
-                        </button>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-        <div className="modal-actions">
-          <button className="btn btn-primary" onClick={onClose}>
-            Close
-          </button>
+        <div className="p-4 border-t border-white/5 md:hidden">
+          <button className="btn-primary w-full py-3" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
