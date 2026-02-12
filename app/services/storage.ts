@@ -166,6 +166,17 @@ export class StorageService {
     }
   }
 
+  static async saveSessionLogs(logs: SessionLog[]): Promise<void> {
+    try {
+      await Preferences.set({
+        key: STORAGE_KEYS.SESSION_LOGS,
+        value: JSON.stringify(logs),
+      });
+    } catch (error) {
+      console.error('Error saving session logs:', error);
+    }
+  }
+
   // Session Summaries
   static async getSessionSummaries(): Promise<SessionSummary[]> {
     try {

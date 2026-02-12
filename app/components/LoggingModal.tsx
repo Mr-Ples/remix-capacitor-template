@@ -39,23 +39,14 @@ export function LoggingModal({
     setActivityTag('');
   };
 
-  const handleSkip = () => {
-    onClose();
-    setNotes('');
-    setAnswers({});
-    setActivityTag('');
-  };
 
   return (
-    <div className="modal-overlay" onClick={handleSkip}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay">
+      <div className="modal">
         <div className="modal-header">
           <h2 className="modal-title">
             {phaseType === 'work' ? 'Work Phase Complete' : 'Break Complete'}
           </h2>
-          <button className="modal-close" onClick={handleSkip}>
-            ×
-          </button>
         </div>
 
         <p className="text-secondary mb-3">
@@ -97,9 +88,8 @@ export function LoggingModal({
               {question.options.map((option) => (
                 <label
                   key={option}
-                  className={`radio-option ${
-                    answers[question.id] === option ? 'selected' : ''
-                  }`}
+                  className={`radio-option ${answers[question.id] === option ? 'selected' : ''
+                    }`}
                 >
                   <input
                     type="radio"
@@ -118,9 +108,6 @@ export function LoggingModal({
         ))}
 
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={handleSkip}>
-            Skip
-          </button>
           <button className="btn btn-primary" onClick={handleSubmit}>
             Save Log
           </button>

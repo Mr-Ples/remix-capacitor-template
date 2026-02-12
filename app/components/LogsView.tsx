@@ -7,19 +7,42 @@ interface LogsViewProps {
   isOpen: boolean;
   onClose: () => void;
   onDataChange?: () => void;
+  defaultProfileId?: string;
 }
 
-export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
+export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: LogsViewProps) {
   const [logs, setLogs] = useState<SessionLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('all');
+  const [selectedDate, setSelectedDate] = useState<string>(''); // empty means all dates
   const [loading, setLoading] = useState(true);
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<SessionLog | null>(null);
+  const [isAddingEntry, setIsAddingEntry] = useState(false);
+  const [newEntryData, setNewEntryData] = useState<{
+    profileId: string;
+    roundNumber: number;
+    phaseType: 'work' | 'break';
+    phaseEndTime: string;
+    notes: string;
+    answers: Record<string, string>;
+    activityTag?: string;
+  }>({
+    profileId: '',
+    roundNumber: 1,
+    phaseType: 'work',
+    phaseEndTime: new Date().toISOString().slice(0, 16), // Format for datetime-local
+    notes: '',
+    answers: {},
+  });
 
   useEffect(() => {
     if (isOpen) {
       loadLogs();
+      setIsAddingEntry(false);
+      if (defaultProfileId) {
+        setSelectedProfileId(defaultProfileId);
+      }
     }
   }, [isOpen]);
 
@@ -36,11 +59,22 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
     setLogs(loadedLogs);
     setProfiles(loadedProfiles);
     setLoading(false);
+
+    // Initialize new entry profile if not set
+    if (!newEntryData.profileId && loadedProfiles.length > 0) {
+      setNewEntryData(prev => ({ ...prev, profileId: loadedProfiles[0].id }));
+    }
   };
 
   const handleClearLogs = async () => {
-    // if (confirm('Are you sure you want to clear all logs? This cannot be undone.')) {
-    await StorageService.clearSessionLogs();
+    const filteredLogs = getFilteredLogs();
+    if (filteredLogs.length === 0) return;
+
+    const filteredIds = new Set(filteredLogs.map(log => log.id));
+    const updatedLogs = logs.filter(log => !filteredIds.has(log.id));
+
+    // if (confirm(`Are you sure you want to clear the ${filteredLogs.length} visible logs? This cannot be undone.`)) {
+    await StorageService.saveSessionLogs(updatedLogs);
     await loadLogs();
     onDataChange?.();
     // }
@@ -52,10 +86,12 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
   };
 
   const getFilteredLogs = (): SessionLog[] => {
-    if (selectedProfileId === 'all') {
-      return logs;
-    }
-    return logs.filter(log => log.profileId === selectedProfileId);
+    return logs.filter(log => {
+      const matchProfile = selectedProfileId === 'all' || log.profileId === selectedProfileId;
+      const logDate = new Date(log.phaseEndTime).toISOString().split('T')[0];
+      const matchDate = !selectedDate || logDate === selectedDate;
+      return matchProfile && matchDate;
+    });
   };
 
   const formatDate = (dateString: string): string => {
@@ -101,13 +137,57 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
   const handleDeleteLog = async (logId: string) => {
     // if (confirm('Are you sure you want to delete this log entry?')) {
     const updatedLogs = logs.filter(log => log.id !== logId);
-    await StorageService.clearSessionLogs();
-    for (const log of updatedLogs) {
-      await StorageService.addSessionLog(log);
-    }
+    await StorageService.saveSessionLogs(updatedLogs);
     await loadLogs();
     onDataChange?.();
     // }
+  };
+
+  const handleAddEntryClick = () => {
+    setIsAddingEntry(true);
+    setNewEntryData({
+      profileId: profiles.length > 0 ? profiles[0].id : '',
+      roundNumber: 1,
+      phaseType: 'work',
+      phaseEndTime: new Date().toISOString().slice(0, 16),
+      notes: '',
+      answers: {},
+    });
+  };
+
+  const handleSaveNewEntry = async () => {
+    if (!newEntryData.profileId) return;
+
+    // Check for duplicates
+    const entryDate = new Date(newEntryData.phaseEndTime).toLocaleDateString();
+    const isDuplicate = logs.some(log =>
+      log.profileId === newEntryData.profileId &&
+      log.roundNumber === newEntryData.roundNumber &&
+      log.phaseType === newEntryData.phaseType &&
+      new Date(log.phaseEndTime).toLocaleDateString() === entryDate
+    );
+
+    if (isDuplicate) {
+      alert('A log entry for this profile, round, and phase already exists for this date.');
+      return;
+    }
+
+    const logEntry: SessionLog = {
+      id: Date.now().toString(),
+      profileId: newEntryData.profileId,
+      sessionStartTime: newEntryData.phaseEndTime, // Approximation
+      roundNumber: newEntryData.roundNumber,
+      phaseType: newEntryData.phaseType,
+      phaseEndTime: newEntryData.phaseEndTime,
+      notes: newEntryData.notes,
+      answers: newEntryData.answers,
+      activityTag: newEntryData.activityTag,
+    };
+
+    await StorageService.addSessionLog(logEntry);
+    await loadLogs(true);
+    onDataChange?.();
+    setIsAddingEntry(false);
   };
 
   if (!isOpen) return null;
@@ -125,6 +205,11 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
       onClose();
     }
   };
+
+  const selectedNewEntryProfile = profiles.find(p => p.id === newEntryData.profileId);
+  const relevantQuestions = selectedNewEntryProfile?.questions.filter(
+    q => q.type === newEntryData.phaseType || q.type === 'both'
+  ) || [];
 
   return (
     <div
@@ -149,8 +234,8 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
         </div>
 
         <div className="mb-3">
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '200px' }}>
               <label className="label" htmlFor="profile-filter">Filter by Profile</label>
               <select
                 id="profile-filter"
@@ -166,24 +251,166 @@ export function LogsView({ isOpen, onClose, onDataChange }: LogsViewProps) {
                 ))}
               </select>
             </div>
+            <div style={{ flex: 1, minWidth: '200px' }}>
+              <label className="label" htmlFor="date-filter">Filter by Date</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  id="date-filter"
+                  type="date"
+                  className="input"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                {selectedDate && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setSelectedDate('')}
+                    style={{ padding: '0 12px' }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+              <button
+                className="btn btn-success"
+                onClick={handleAddEntryClick}
+              >
+                Add Entry
+              </button>
               <button
                 className="btn btn-secondary"
                 onClick={handleExportLogs}
                 disabled={logs.length === 0}
               >
-                Export Logs
+                Export
               </button>
               <button
                 className="btn btn-danger"
                 onClick={handleClearLogs}
-                disabled={logs.length === 0}
+                disabled={filteredLogs.length === 0}
               >
-                Clear All Logs
+                {selectedProfileId === 'all' && !selectedDate ? 'Clear All Logs' : 'Clear Filtered'}
               </button>
             </div>
           </div>
         </div>
+
+        {isAddingEntry ? (
+          <div className="card" style={{ border: '2px solid var(--success-color)' }}>
+            <h3 style={{ marginBottom: '16px' }}>Add Manual Entry</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div className="input-group">
+                <label className="label">Profile</label>
+                <select
+                  className="select"
+                  value={newEntryData.profileId}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, profileId: e.target.value, answers: {}, activityTag: undefined })}
+                >
+                  {profiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="input-group">
+                <label className="label">Date & Time</label>
+                <input
+                  type="datetime-local"
+                  className="input"
+                  value={newEntryData.phaseEndTime}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, phaseEndTime: e.target.value })}
+                />
+              </div>
+
+              <div className="input-group">
+                <label className="label">Round Number</label>
+                <input
+                  type="number"
+                  className="input"
+                  min="1"
+                  value={newEntryData.roundNumber}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, roundNumber: parseInt(e.target.value) || 1 })}
+                />
+              </div>
+
+              <div className="input-group">
+                <label className="label">Phase Type</label>
+                <select
+                  className="select"
+                  value={newEntryData.phaseType}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, phaseType: e.target.value as 'work' | 'break', answers: {} })}
+                >
+                  <option value="work">Work</option>
+                  <option value="break">Break</option>
+                </select>
+              </div>
+            </div>
+
+            {selectedNewEntryProfile?.activityTags && selectedNewEntryProfile.activityTags.length > 0 && (
+              <div className="input-group">
+                <label className="label">Activity Tag</label>
+                <select
+                  className="select"
+                  value={newEntryData.activityTag || ''}
+                  onChange={(e) => setNewEntryData({ ...newEntryData, activityTag: e.target.value || undefined })}
+                >
+                  <option value="">None</option>
+                  {selectedNewEntryProfile.activityTags.map(tag => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="input-group">
+              <label className="label">Notes</label>
+              <textarea
+                className="textarea"
+                rows={3}
+                value={newEntryData.notes}
+                onChange={(e) => setNewEntryData({ ...newEntryData, notes: e.target.value })}
+                placeholder="Add notes..."
+              />
+            </div>
+
+            {relevantQuestions.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Questions:</div>
+                {relevantQuestions.map(q => (
+                  <div key={q.id} className="input-group mb-2">
+                    <label className="label" style={{ fontSize: '13px' }}>{q.text}</label>
+                    <select
+                      className="select"
+                      value={newEntryData.answers[q.id] || ''}
+                      onChange={(e) => setNewEntryData({
+                        ...newEntryData,
+                        answers: { ...newEntryData.answers, [q.id]: e.target.value }
+                      })}
+                    >
+                      <option value="">-- Select --</option>
+                      {q.options.map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setIsAddingEntry(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-success" onClick={handleSaveNewEntry}>
+                Save Entry
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="text-center" style={{ padding: '40px' }}>

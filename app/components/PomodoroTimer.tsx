@@ -501,6 +501,7 @@ export function PomodoroTimer() {
         isOpen={showLogsView}
         onClose={() => setShowLogsView(false)}
         onDataChange={loadSessionLogs}
+        defaultProfileId={profile?.id}
       />
 
       {/* Daily Goals Overview */}
