@@ -142,6 +142,22 @@ export class StorageService {
     }
   }
 
+  static async updateSessionLog(updatedLog: SessionLog): Promise<void> {
+    try {
+      const logs = await this.getSessionLogs();
+      const index = logs.findIndex(log => log.id === updatedLog.id);
+      if (index !== -1) {
+        logs[index] = updatedLog;
+        await Preferences.set({
+          key: STORAGE_KEYS.SESSION_LOGS,
+          value: JSON.stringify(logs),
+        });
+      }
+    } catch (error) {
+      console.error('Error updating session log:', error);
+    }
+  }
+
   static async clearSessionLogs(): Promise<void> {
     try {
       await Preferences.remove({ key: STORAGE_KEYS.SESSION_LOGS });

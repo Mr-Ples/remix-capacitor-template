@@ -166,7 +166,6 @@ export function PomodoroTimer() {
         <button 
           className="btn btn-secondary" 
           onClick={() => setShowLogsView(true)}
-          disabled={!!isSessionActive}
         >
           View Logs
         </button>
