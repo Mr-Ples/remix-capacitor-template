@@ -15,6 +15,7 @@ export function PomodoroTimer() {
   const [showLoggingModal, setShowLoggingModal] = useState(false);
   const [showLogsView, setShowLogsView] = useState(false);
   const [loggingPhaseType, setLoggingPhaseType] = useState<'work' | 'break'>('work');
+  const [loggingRoundNumber, setLoggingRoundNumber] = useState<number>(1);
   const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
   const controllerRef = useRef<SessionController | null>(null);
 
@@ -42,7 +43,9 @@ export function PomodoroTimer() {
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
       } else if (event.type === 'phaseEnd') {
-        setLoggingPhaseType(event.state.isWorkPhase ? 'break' : 'work');
+        // Capture the completed round number before state transitions
+        setLoggingRoundNumber(event.state.currentRound);
+        setLoggingPhaseType(event.state.isWorkPhase ? 'work' : 'break');
         setShowLoggingModal(true);
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
@@ -72,6 +75,7 @@ export function PomodoroTimer() {
         try {
           const nativeState = await PomodoroService.getSessionState();
           if (nativeState.pendingLog) {
+            setLoggingRoundNumber(nativeState.pendingLog.roundNumber);
             setLoggingPhaseType(nativeState.pendingLog.phaseType as 'work' | 'break');
             setShowLoggingModal(true);
           }
@@ -115,7 +119,7 @@ export function PomodoroTimer() {
       id: Date.now().toString(),
       profileId: profile.id,
       sessionStartTime: new Date(sessionState.startTime).toISOString(),
-      roundNumber: sessionState.currentRound,
+      roundNumber: loggingRoundNumber,
       phaseType: loggingPhaseType,
       phaseEndTime: new Date().toISOString(),
       notes,
@@ -319,7 +323,7 @@ export function PomodoroTimer() {
           onSubmit={handleLogSubmit}
           profile={profile}
           phaseType={loggingPhaseType}
-          roundNumber={sessionState.currentRound}
+          roundNumber={loggingRoundNumber}
           totalRounds={sessionState.totalRounds}
           currentActivityTag={sessionState.currentActivityTag}
         />

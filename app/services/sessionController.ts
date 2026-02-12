@@ -372,7 +372,8 @@ export class SessionController {
       this.state.currentActivityTag
     );
 
-    // Emit phase end event (UI will handle showing log dialog)
+    // Emit phase end event BEFORE updating state (UI will handle showing log dialog)
+    // This ensures the logging modal receives the correct completed round number
     this.emit({ type: 'phaseEnd', state: this.state });
 
     // Move to next phase
