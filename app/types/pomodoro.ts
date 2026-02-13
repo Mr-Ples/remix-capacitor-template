@@ -24,13 +24,19 @@ export interface Profile {
    */
   activityTags?: string[];
   /**
-   * Target number of rounds for specific activity tags.
    * Key is the tag name, value is the target number of rounds.
    */
   goals?: Record<string, number | string>;
+  /**
+   * Colors for activity tags.
+   * Key is the tag name, value is a CSS color string.
+   */
+  tagColors?: Record<string, string>;
   questions: Question[];
   createdAt: string;
   updatedAt: string;
+  autoStartTime?: string; // "HH:MM"
+  lastAutoStartDay?: string; // "YYYY-MM-DD"
 }
 
 export interface Question {
@@ -51,6 +57,16 @@ export interface SessionState {
   phaseDuration: number; // in seconds
   isActive: boolean;
   currentActivityTag?: string; // Current activity tag for this round
+  timeRemaining?: number; // Optional: used when resuming a suspended round
+}
+
+export interface SuspendedRound {
+  id: string;
+  profileId: string;
+  activityTag: string;
+  timeRemaining: number;
+  phaseDuration: number;
+  createdAt: string;
 }
 
 export interface SessionLog {
@@ -103,5 +119,7 @@ export const DEFAULT_PROFILE: Profile = {
     }
   ],
   createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString()
+  updatedAt: new Date().toISOString(),
+  autoStartTime: undefined,
+  lastAutoStartDay: undefined
 };

@@ -61,7 +61,8 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
     setProfiles(loadedProfiles);
     setLoading(false);
     if (!newEntryData.profileId && loadedProfiles.length > 0) {
-      setNewEntryData(prev => ({ ...prev, profileId: loadedProfiles[0].id }));
+      const initialProfileId = defaultProfileId || loadedProfiles[0].id;
+      setNewEntryData(prev => ({ ...prev, profileId: initialProfileId }));
     }
   };
 
@@ -212,7 +213,7 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                     value={newEntryData.profileId}
                     onChange={(e) => {
                       const pId = e.target.value;
-                      setNewEntryData({ ...newEntryData, profileId: pId, answers: {} });
+                      setNewEntryData({ ...newEntryData, profileId: pId, answers: {}, activityTag: undefined });
                     }}
                   >
                     {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -249,6 +250,27 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                   onChange={(e) => setNewEntryData({ ...newEntryData, notes: e.target.value })}
                 />
               </div>
+
+              {(() => {
+                const profile = profiles.find(p => p.id === newEntryData.profileId);
+                if (!profile?.activityTags || profile.activityTags.length === 0) return null;
+
+                return (
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-mutedForeground">Activity</label>
+                    <select
+                      className="input-field w-full h-9 text-xs"
+                      value={newEntryData.activityTag || ''}
+                      onChange={(e) => setNewEntryData({ ...newEntryData, activityTag: e.target.value || undefined })}
+                    >
+                      <option value="">None</option>
+                      {profile.activityTags.map(tag => (
+                        <option key={tag} value={tag}>{tag}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
 
               {newEntryData.profileId && (() => {
                 const profile = profiles.find(p => p.id === newEntryData.profileId);
@@ -323,6 +345,22 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                             onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
                           />
                         </div>
+
+                        {profile && profile.activityTags && profile.activityTags.length > 0 && (
+                          <div className="space-y-2">
+                            <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Activity</label>
+                            <select
+                              className="input-field w-full h-9 text-sm"
+                              value={editFormData.activityTag || ''}
+                              onChange={(e) => setEditFormData({ ...editFormData, activityTag: e.target.value || undefined })}
+                            >
+                              <option value="">None</option>
+                              {profile.activityTags.map(tag => (
+                                <option key={tag} value={tag}>{tag}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
 
                         {profile && profile.questions.length > 0 && (
                           <div className="space-y-4 pt-2 border-t border-white/5">

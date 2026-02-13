@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import type { Profile, Question } from '../types/pomodoro';
 import { StorageService } from '../services/storage';
 
+const TAG_COLORS = ['#f87171', '#fb923c', '#fbbf24', '#4ade80', '#22d3ee', '#818cf8', '#c084fc', '#f472b6'];
+
 interface ProfileManagerProps {
   currentProfile: Profile;
   onProfileChange: (profile: Profile) => void;
@@ -49,6 +51,8 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       ],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      autoStartTime: undefined,
+      lastAutoStartDay: undefined,
     };
     setEditingProfile(newProfile);
     setIsEditing(true);
@@ -155,9 +159,23 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
   const addActivityTag = () => {
     if (!editingProfile) return;
     const tags = editingProfile.activityTags || [];
+    const usedColors = Object.values(editingProfile.tagColors || {});
+    const unusedColors = TAG_COLORS.filter(c => !usedColors.includes(c));
+    const randomColor = unusedColors.length > 0
+      ? unusedColors[Math.floor(Math.random() * unusedColors.length)]
+      : TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)];
+
+    let newTagName = `Tag ${tags.length + 1}`;
+    let counter = tags.length + 1;
+    while (tags.includes(newTagName)) {
+      counter++;
+      newTagName = `Tag ${counter}`;
+    }
+
     setEditingProfile({
       ...editingProfile,
-      activityTags: [...tags, 'New Tag']
+      activityTags: [...tags, newTagName],
+      tagColors: { ...(editingProfile.tagColors || {}), [newTagName]: randomColor }
     });
   };
 
@@ -176,13 +194,43 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
         newGoals[value] = goalValue;
       }
     }
-    setEditingProfile({ ...editingProfile, activityTags: tags, goals: newGoals });
+
+    let newColors = editingProfile.tagColors;
+    if (newColors && newColors[oldTag] !== undefined) {
+      newColors = { ...newColors };
+      const colorValue = newColors[oldTag];
+      delete newColors[oldTag];
+      if (value.trim()) {
+        newColors[value] = colorValue;
+      }
+    }
+    setEditingProfile({ ...editingProfile, activityTags: tags, goals: newGoals, tagColors: newColors });
+  };
+
+  const updateActivityColor = (tag: string, color: string) => {
+    if (!editingProfile) return;
+    const newColors = { ...(editingProfile.tagColors || {}), [tag]: color };
+    setEditingProfile({ ...editingProfile, tagColors: newColors });
   };
 
   const deleteActivityTag = (index: number) => {
     if (!editingProfile) return;
+    const oldTag = (editingProfile.activityTags || [])[index];
     const tags = (editingProfile.activityTags || []).filter((_, i) => i !== index);
-    setEditingProfile({ ...editingProfile, activityTags: tags });
+
+    let newGoals = editingProfile.goals;
+    if (newGoals && oldTag && newGoals[oldTag] !== undefined) {
+      newGoals = { ...newGoals };
+      delete newGoals[oldTag];
+    }
+
+    let newColors = editingProfile.tagColors;
+    if (newColors && oldTag && newColors[oldTag] !== undefined) {
+      newColors = { ...newColors };
+      delete newColors[oldTag];
+    }
+
+    setEditingProfile({ ...editingProfile, activityTags: tags, goals: newGoals, tagColors: newColors });
   };
 
   if (isEditing && editingProfile) {
@@ -284,61 +332,106 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
             )}
           </div>
 
+          <div className="flex items-center gap-4 p-4 rounded-lg bg-white/5 border border-white/5">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-medium">Auto Start Session</p>
+              <p className="text-xs text-mutedForeground">Automatically start a session at a specific time.</p>
+            </div>
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-accent"
+              checked={!!editingProfile.autoStartTime}
+              onChange={(e) =>
+                setEditingProfile({
+                  ...editingProfile,
+                  autoStartTime: e.target.checked ? (editingProfile.autoStartTime || '09:00') : undefined,
+                })
+              }
+            />
+            {editingProfile.autoStartTime && (
+              <input
+                type="time"
+                className="input-field w-28 h-10 px-3 text-sm"
+                value={editingProfile.autoStartTime}
+                onChange={(e) =>
+                  setEditingProfile({
+                    ...editingProfile,
+                    autoStartTime: e.target.value,
+                  })
+                }
+              />
+            )}
+          </div>
+
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity Tags & Goals</label>
+              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity Tags & Session Targets</label>
               <button className="btn-secondary py-1.5 px-3 text-xs" onClick={addActivityTag}>+ Add Tag</button>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {(editingProfile.activityTags || []).map((tag, index) => (
-                <div key={index} className="flex gap-2 items-center group">
-                  <input
-                    type="text"
-                    className="input-field flex-1 h-10"
-                    value={tag}
-                    placeholder="Tag name"
-                    onChange={(e) => updateActivityTag(index, e.target.value)}
-                  />
-                  <div className="flex items-center bg-white/5 border border-white/5 rounded-lg h-10 px-2 min-w-[100px] justify-between">
-                    {(() => {
-                      const rawVal = editingProfile.goals?.[tag];
-                      const isPercentage = typeof rawVal === 'string' && rawVal.endsWith('%');
-                      const numVal = isPercentage
-                        ? (rawVal as string).replace('%', '')
-                        : (rawVal || '');
+                <div key={index} className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-4 group">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      className="input-field flex-1 h-10"
+                      value={tag}
+                      placeholder="Tag name"
+                      onChange={(e) => updateActivityTag(index, e.target.value)}
+                    />
+                    <div className="flex items-center bg-white/5 border border-white/5 rounded-lg h-10 px-2 min-w-[100px] justify-between">
+                      {(() => {
+                        const rawVal = editingProfile.goals?.[tag];
+                        const isPercentage = typeof rawVal === 'string' && rawVal.endsWith('%');
+                        const numVal = isPercentage
+                          ? (rawVal as string).replace('%', '')
+                          : (rawVal || '');
 
-                      return (
-                        <>
-                          <input
-                            type="number"
-                            className="bg-transparent border-none focus:ring-0 text-right w-14 text-sm px-1 py-0"
-                            value={numVal}
-                            placeholder="0"
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value);
-                              const newGoals = { ...(editingProfile.goals || {}) };
-                              if (isNaN(val) || val <= 0) delete newGoals[tag];
-                              else newGoals[tag] = isPercentage ? `${val}%` : val;
-                              setEditingProfile({ ...editingProfile, goals: newGoals });
-                            }}
-                          />
-                          <button
-                            className={`w-7 h-7 ml-1 rounded flex items-center justify-center text-[10px] font-bold transition-colors ${isPercentage ? 'bg-accent text-accentForeground' : 'bg-white/10 text-mutedForeground'
-                              }`}
-                            onClick={() => {
-                              const newGoals = { ...(editingProfile.goals || {}) };
-                              const val = parseInt(String(numVal)) || 0;
-                              newGoals[tag] = isPercentage ? val : `${val}%`;
-                              setEditingProfile({ ...editingProfile, goals: newGoals });
-                            }}
-                          >
-                            {isPercentage ? '%' : '#'}
-                          </button>
-                        </>
-                      );
-                    })()}
+                        return (
+                          <>
+                            <input
+                              type="number"
+                              className="bg-transparent border-none focus:ring-0 text-right w-14 text-sm px-1 py-0"
+                              value={numVal}
+                              placeholder="0"
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                const newGoals = { ...(editingProfile.goals || {}) };
+                                if (isNaN(val) || val <= 0) delete newGoals[tag];
+                                else newGoals[tag] = isPercentage ? `${val}%` : val;
+                                setEditingProfile({ ...editingProfile, goals: newGoals });
+                              }}
+                            />
+                            <button
+                              className={`w-7 h-7 ml-1 rounded flex items-center justify-center text-[10px] font-bold transition-colors ${isPercentage ? 'bg-accent text-accentForeground' : 'bg-white/10 text-mutedForeground'
+                                }`}
+                              onClick={() => {
+                                const newGoals = { ...(editingProfile.goals || {}) };
+                                const val = parseInt(String(numVal)) || 0;
+                                newGoals[tag] = isPercentage ? val : `${val}%`;
+                                setEditingProfile({ ...editingProfile, goals: newGoals });
+                              }}
+                            >
+                              {isPercentage ? '%' : '#'}
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <button className="text-mutedForeground hover:text-red-400 p-2" onClick={() => deleteActivityTag(index)}>×</button>
                   </div>
-                  <button className="text-mutedForeground hover:text-red-400 p-2" onClick={() => deleteActivityTag(index)}>×</button>
+                  <div className="flex flex-wrap gap-2 items-center pt-1 border-t border-white/5">
+                    <span className="text-[10px] text-mutedForeground uppercase tracking-wider mr-2">Tag Color</span>
+                    {TAG_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        className={`w-5 h-5 rounded-full transition-all ${editingProfile.tagColors?.[tag] === color ? 'scale-125 ring-2 ring-white/50' : 'opacity-40 hover:opacity-100 hover:scale-110'}`}
+                        style={{ backgroundColor: color }}
+                        onClick={() => updateActivityColor(tag, color)}
+                        title={color}
+                      />
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>

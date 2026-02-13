@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
-import type { Profile, SessionState, SessionLog } from '../types/pomodoro';
+import type { Profile, SessionState, SessionLog, SuspendedRound } from '../types/pomodoro';
 import { SessionController } from '../services/sessionController';
 import PomodoroService from '../services/pomodoroService';
 import { StorageService } from '../services/storage';
@@ -18,9 +18,11 @@ export function PomodoroTimer() {
   const [loggingRoundNumber, setLoggingRoundNumber] = useState<number>(1);
   const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
   const [currentLogId, setCurrentLogId] = useState<string | null>(null);
+  const [activeSlide, setActiveSlide] = useState(0);
   const controllerRef = useRef<SessionController | null>(null);
 
   const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
+  const [suspendedRounds, setSuspendedRounds] = useState<SuspendedRound[]>([]);
 
   useEffect(() => {
     const controller = SessionController.getInstance();
@@ -128,6 +130,8 @@ export function PomodoroTimer() {
   const loadSessionLogs = async () => {
     const logs = await StorageService.getSessionLogs();
     setSessionLogs(logs);
+    const suspended = await StorageService.getSuspendedRounds();
+    setSuspendedRounds(suspended);
   };
 
   const handleStartSession = async () => {
@@ -139,10 +143,25 @@ export function PomodoroTimer() {
     }
   };
 
-  const handleActivityTagChange = (tag: string) => {
+  const handleActivityTagChange = async (tag: string) => {
+    let suspend = false;
+    if (controllerRef.current && sessionState && sessionState.isActive && sessionState.isWorkPhase && sessionState.currentActivityTag && sessionState.currentActivityTag !== tag) {
+      if (window.confirm(`Do you want to complete the "${sessionState.currentActivityTag}" round later?`)) {
+        suspend = true;
+      }
+    }
+
     setSelectedActivityTag(tag);
     if (controllerRef.current && sessionState) {
-      controllerRef.current.setActivityTag(tag || undefined);
+      await controllerRef.current.switchActivityWithSuspension(tag, suspend);
+      await loadSessionLogs();
+    }
+  };
+
+  const handleResumeSuspendedRound = async (suspendedRound: SuspendedRound) => {
+    if (controllerRef.current) {
+      await controllerRef.current.resumeSuspendedRound(suspendedRound);
+      await loadSessionLogs();
     }
   };
 
@@ -225,12 +244,26 @@ export function PomodoroTimer() {
     return ((sessionState.phaseDuration - timeRemaining) / sessionState.phaseDuration) * 100;
   };
 
+  if (!profile) {
+    return <div className="container text-center">Loading...</div>;
+  }
   const getCompletedRoundsForTag = (tag: string | undefined): number => {
     if (!tag) return 0;
     const today = new Date().toDateString();
     return sessionLogs.filter(log => {
       const logDate = new Date(log.phaseEndTime).toDateString();
-      return log.activityTag === tag && logDate === today;
+      return log.profileId === profile.id && log.activityTag === tag && logDate === today;
+    }).length;
+  };
+
+  const getUncategorizedRounds = (): number => {
+    const today = new Date().toDateString();
+    const allTags = profile.activityTags || [];
+    return sessionLogs.filter(log => {
+      const logDate = new Date(log.phaseEndTime).toDateString();
+      if (log.profileId !== profile.id || logDate !== today) return false;
+      // Strictly "uncategorized" if no tag OR tag is not in the official list
+      return !log.activityTag || !allTags.includes(log.activityTag);
     }).length;
   };
 
@@ -285,7 +318,7 @@ export function PomodoroTimer() {
     if (!target) {
       return (
         <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No daily goal set
+          No session target set
         </div>
       );
     }
@@ -302,7 +335,7 @@ export function PomodoroTimer() {
       if (!profile?.goals?.[tag]) {
         return (
           <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No daily goal set
+            No session target set
           </div>
         );
       }
@@ -314,17 +347,18 @@ export function PomodoroTimer() {
     const originalGoal = profile?.goals?.[tag];
     const isPercentage = typeof originalGoal === 'string' && originalGoal.endsWith('%');
 
+    const tagColor = profile?.tagColors?.[tag] || 'var(--accent)';
     return (
       <div style={{ marginTop: '4px', fontSize: '13px', color: isMet ? 'var(--success-color)' : 'var(--text-secondary)' }}>
-        Daily Goal: <strong>{completed} / {targetVal}</strong> rounds {isMet && '✓'}
+        Session Target: <strong>{completed} / {targetVal}</strong> rounds {isMet && '✓'}
+        <div style={{ width: '100%', height: '2px', background: 'rgba(255,255,255,0.1)', marginTop: '4px', borderRadius: '1px' }}>
+          <div style={{ width: `${Math.min(100, (completed / targetVal) * 100)}%`, height: '100%', background: tagColor, borderRadius: '1px' }} />
+        </div>
         {isPercentage && <span style={{ opacity: 0.7, marginLeft: '4px' }}>({originalGoal})</span>}
       </div>
     );
   };
 
-  if (!profile) {
-    return <div className="container text-center">Loading...</div>;
-  }
 
   const isSessionActive = sessionState && sessionState.isActive;
 
@@ -380,8 +414,13 @@ export function PomodoroTimer() {
                   strokeDasharray={2 * Math.PI * 130}
                   strokeDashoffset={2 * Math.PI * 130 * (1 - getProgressPercentage() / 100)}
                   strokeLinecap="round"
-                  className={`${sessionState.isWorkPhase ? 'text-accent' : 'text-green-500'} transition-all duration-300`}
-                  style={{ filter: 'drop-shadow(0 0 12px currentColor)' }}
+                  className="transition-all duration-300"
+                  style={{
+                    filter: 'drop-shadow(0 0 12px currentColor)',
+                    color: sessionState.isWorkPhase
+                      ? (sessionState.currentActivityTag ? profile.tagColors?.[sessionState.currentActivityTag] : 'var(--accent)')
+                      : '#22c55e'
+                  }}
                 />
               </svg>
 
@@ -418,6 +457,17 @@ export function PomodoroTimer() {
                 <div className="mt-4">
                   {renderGoalProgress(sessionState.currentActivityTag)}
                 </div>
+                {sessionState.currentActivityTag && suspendedRounds.find(r => r.activityTag === sessionState.currentActivityTag) && (
+                  <button
+                    className="btn-secondary w-full mt-4 text-sm"
+                    onClick={() => {
+                      const round = suspendedRounds.find(r => r.activityTag === sessionState.currentActivityTag);
+                      if (round) handleResumeSuspendedRound(round);
+                    }}
+                  >
+                    Resume Suspended Round ({formatTime(suspendedRounds.find(r => r.activityTag === sessionState.currentActivityTag)?.timeRemaining || 0)})
+                  </button>
+                )}
               </div>
             )}
 
@@ -494,6 +544,17 @@ export function PomodoroTimer() {
                 <div className="pt-2">
                   {renderGoalProgress(selectedActivityTag)}
                 </div>
+                {selectedActivityTag && suspendedRounds.find(r => r.activityTag === selectedActivityTag) && (
+                  <button
+                    className="btn-secondary w-full mt-4 text-sm"
+                    onClick={() => {
+                      const round = suspendedRounds.find(r => r.activityTag === selectedActivityTag);
+                      if (round) handleResumeSuspendedRound(round);
+                    }}
+                  >
+                    Resume Suspended Round ({formatTime(suspendedRounds.find(r => r.activityTag === selectedActivityTag)?.timeRemaining || 0)})
+                  </button>
+                )}
               </div>
             )}
 
@@ -504,60 +565,166 @@ export function PomodoroTimer() {
         )}
       </div>
 
-      {/* Daily Goals Overview */}
-      {profile && profile.goals && Object.keys(profile.goals).length > 0 && (
-        <div className="glass-card p-6 space-y-6">
-          <h3 className="text-lg font-medium border-b border-white/5 pb-4">Daily Goals</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-            {Object.entries(profile.goals || {}).map(([tag, rawTarget]) => {
-              const completed = getCompletedRoundsForTag(tag);
-              const target = resolveGoalTarget(rawTarget);
-              const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
-              const isMet = completed >= target;
+      {/* Session Progress Section (Targets & Chronological) */}
+      <div className="glass-card overflow-hidden">
+        <div className="flex border-b border-white/5">
+          <button
+            className={`flex-1 py-4 text-sm font-medium transition-colors ${activeSlide === 0 ? 'text-foreground border-b-2 border-accent' : 'text-mutedForeground hover:text-foreground'}`}
+            onClick={() => setActiveSlide(0)}
+          >
+            Session Targets
+          </button>
+          <button
+            className={`flex-1 py-4 text-sm font-medium transition-colors ${activeSlide === 1 ? 'text-foreground border-b-2 border-accent' : 'text-mutedForeground hover:text-foreground'}`}
+            onClick={() => setActiveSlide(1)}
+          >
+            Chronological View
+          </button>
+        </div>
 
-              return (
-                <div key={tag} className="flex flex-col items-center space-y-3 p-2 group">
-                  <div className="relative w-20 h-20 flex items-center justify-center">
-                    <svg className="w-full h-full transform -rotate-90 overflow-visible">
-                      <circle
-                        cx="40"
-                        cy="40"
-                        r="36"
-                        fill="transparent"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        className="text-white/5"
-                      />
-                      <circle
-                        cx="40"
-                        cy="40"
-                        r="36"
-                        fill="transparent"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                        strokeDasharray={2 * Math.PI * 36}
-                        strokeDashoffset={2 * Math.PI * 36 * (1 - percent / 100)}
-                        strokeLinecap="round"
-                        className={`${isMet ? 'text-green-500' : 'text-accent'} transition-all duration-500 ease-out`}
-                        style={{ filter: 'drop-shadow(0 0 6px currentColor)' }}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-sm font-medium tabular-nums">
-                        {completed}
-                      </span>
+        <div className="p-6 relative">
+          {activeSlide === 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 animate-in fade-in slide-in-from-right-4 duration-300">
+              {(profile.activityTags || []).map((tag) => {
+                const rawTarget = profile.goals?.[tag];
+                const completed = getCompletedRoundsForTag(tag);
+                const target = resolveGoalTarget(rawTarget);
+                const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
+                const isMet = target > 0 && completed >= target;
+                const tagColor = profile.tagColors?.[tag] || 'var(--accent)';
+
+                return (
+                  <div key={tag} className="flex flex-col items-center space-y-3 p-2 group">
+                    <div className="relative w-20 h-20 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90 overflow-visible">
+                        <circle cx="40" cy="40" r="36" fill="transparent" stroke="currentColor" strokeWidth="4" className="text-white/5" />
+                        <circle
+                          cx="40" cy="40" r="36" fill="transparent" stroke="currentColor" strokeWidth="4"
+                          strokeDasharray={2 * Math.PI * 36}
+                          strokeDashoffset={2 * Math.PI * 36 * (1 - percent / 100)}
+                          strokeLinecap="round"
+                          className="transition-all duration-500 ease-out"
+                          style={{ filter: `drop-shadow(0 0 6px ${tagColor})`, color: tagColor }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-sm font-medium tabular-nums">{completed}</span>
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-medium truncate w-24" title={tag}>{tag}</p>
+                      <p className="text-[10px] text-mutedForeground">Target: {target}</p>
                     </div>
                   </div>
-                  <div className="text-center">
-                    <p className="text-xs font-medium truncate w-24" title={tag}>{tag}</p>
-                    <p className="text-[10px] text-mutedForeground">Goal: {target}</p>
+                );
+              })}
+
+              {/* Uncategorized Circle */}
+              {(() => {
+                const uncategorized = getUncategorizedRounds();
+                const totalPlanned = getReferenceTotalRounds();
+                const taggedTargetsSum = Object.values(profile.goals || {}).reduce((acc: number, goal) => {
+                  return acc + resolveGoalTarget(goal);
+                }, 0);
+
+                const target = Math.max(0, totalPlanned - taggedTargetsSum);
+                const percent = target > 0 ? Math.min(100, (uncategorized / target) * 100) : (uncategorized > 0 ? 100 : 0);
+                const tagColor = '#64748b'; // Muted grey for uncategorized
+
+                if (target === 0 && uncategorized === 0) return null;
+
+                return (
+                  <div className="flex flex-col items-center space-y-3 p-2 group">
+                    <div className="relative w-20 h-20 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90 overflow-visible">
+                        <circle cx="40" cy="40" r="36" fill="transparent" stroke="currentColor" strokeWidth="4" className="text-white/5" />
+                        <circle
+                          cx="40" cy="40" r="36" fill="transparent" stroke="currentColor" strokeWidth="4"
+                          strokeDasharray={2 * Math.PI * 36}
+                          strokeDashoffset={2 * Math.PI * 36 * (1 - percent / 100)}
+                          strokeLinecap="round"
+                          className="transition-all duration-500 ease-out"
+                          style={{ filter: `drop-shadow(0 0 6px ${tagColor})`, color: tagColor }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-sm font-medium tabular-nums">{uncategorized}</span>
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-medium truncate w-24">Uncategorized</p>
+                      <p className="text-[10px] text-mutedForeground">Target: {target}</p>
+                    </div>
                   </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+              {/* Chronological Circular Timeline */}
+              <div className="relative w-48 h-48">
+                <svg className="w-full h-full transform -rotate-90 overflow-visible">
+                  <circle cx="96" cy="96" r="80" fill="transparent" stroke="currentColor" strokeWidth="12" className="text-white/5" />
+                  {(() => {
+                    const today = new Date().toDateString();
+                    const todayLogs = sessionLogs
+                      .filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).toDateString() === today)
+                      .sort((a, b) => new Date(a.phaseEndTime).getTime() - new Date(b.phaseEndTime).getTime());
+
+                    if (todayLogs.length === 0) return null;
+
+                    const totalPlanned = getReferenceTotalRounds();
+                    const totalForCircle = Math.max(todayLogs.length, totalPlanned);
+                    const dashArray = 2 * Math.PI * 80;
+
+                    return todayLogs.map((log, i) => {
+                      const segmentLength = (1 / totalForCircle) * dashArray;
+                      const segmentOffset = (i / totalForCircle) * dashArray;
+                      const color = log.activityTag ? (profile.tagColors?.[log.activityTag] || 'var(--accent)') : '#64748b';
+
+                      return (
+                        <circle
+                          key={log.id}
+                          cx="96" cy="96" r="80"
+                          fill="transparent"
+                          stroke={color}
+                          strokeWidth="12"
+                          strokeDasharray={`${Math.max(0, segmentLength - 2)} ${dashArray}`}
+                          strokeDashoffset={-segmentOffset}
+                          strokeLinecap="round"
+                          className="transition-all duration-500"
+                        />
+                      );
+                    });
+                  })()}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-3xl font-bold tabular-nums">
+                    {sessionLogs.filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).toDateString() === new Date().toDateString()).length}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-widest text-mutedForeground">Rounds</span>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
+                {/* Legend */}
+                {Object.keys(profile.tagColors || {}).concat(['Uncategorized']).map(tag => {
+                  const count = tag === 'Uncategorized'
+                    ? getUncategorizedRounds()
+                    : getCompletedRoundsForTag(tag);
+                  if (count === 0) return null;
+                  const color = tag === 'Uncategorized' ? '#64748b' : (profile.tagColors?.[tag] || 'var(--accent)');
+                  return (
+                    <div key={tag} className="flex items-center gap-2 px-2 py-1 rounded-full bg-white/5 border border-white/5">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="text-[10px] font-medium">{tag}: {count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {showLoggingModal && sessionState && (
         <LoggingModal

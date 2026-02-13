@@ -55,7 +55,15 @@ export function LoggingModal({
           <div className="space-y-6">
             {profile.activityTags && profile.activityTags.length > 0 && (
               <div className="space-y-2">
-                <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity</label>
+                <div className="flex justify-between items-center px-1">
+                  <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground">Activity</label>
+                  {activityTag && profile.tagColors?.[activityTag] && (
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full" style={{ backgroundColor: profile.tagColors[activityTag] }} />
+                      <span className="text-[10px] text-mutedForeground">Color active</span>
+                    </div>
+                  )}
+                </div>
                 <select
                   className="input-field w-full appearance-none cursor-pointer"
                   value={activityTag}

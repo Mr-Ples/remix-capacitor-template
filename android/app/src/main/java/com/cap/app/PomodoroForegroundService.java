@@ -119,9 +119,6 @@ public class PomodoroForegroundService extends Service {
     }
 
     private void handlePhaseEnd() {
-        // Vibrate
-        vibrate();
-        
         // Store pending log for the completed phase
         pendingLog = new JSObject();
         pendingLog.put("roundNumber", currentRound);
@@ -132,13 +129,16 @@ public class PomodoroForegroundService extends Service {
 
         // Move to next phase or round
         if (isWorkPhase) {
-            // Work phase ended
+            // Work phase ended -> Break starts or Round ends (if no break)
             if (breakDurationSec > 0) {
+                // Break starts -> Vibrate
+                vibrate(false);
                 isWorkPhase = false;
                 phaseDurationSec = breakDurationSec;
                 phaseEndTimeMillis = System.currentTimeMillis() + (phaseDurationSec * 1000L);
             } else {
-                // No break, move to next round
+                // No break, move to next round -> This is a round end
+                vibrate(true);
                 currentRound++;
                 if (currentRound > totalRounds) {
                     stopSession();
@@ -149,7 +149,8 @@ public class PomodoroForegroundService extends Service {
                 phaseEndTimeMillis = System.currentTimeMillis() + (phaseDurationSec * 1000L);
             }
         } else {
-            // Break phase ended
+            // Break phase ended -> Round ends
+            vibrate(true);
             currentRound++;
             if (currentRound > totalRounds) {
                 stopSession();
@@ -164,7 +165,7 @@ public class PomodoroForegroundService extends Service {
         startUpdateLoop();
     }
 
-    private void vibrate() {
+    private void vibrate(boolean isRoundEnd) {
         Vibrator v;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             VibratorManager vm = (VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
@@ -174,9 +175,17 @@ public class PomodoroForegroundService extends Service {
         }
         if (v != null && v.hasVibrator()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                v.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
+                long[] pattern;
+                if (isRoundEnd) {
+                    // Double pulse for round end
+                    pattern = new long[]{0, 200, 100, 200};
+                } else {
+                    // Single pulse for break start
+                    pattern = new long[]{0, 200};
+                }
+                v.vibrate(VibrationEffect.createWaveform(pattern, -1));
             } else {
-                v.vibrate(500);
+                v.vibrate(isRoundEnd ? 500 : 200);
             }
         }
     }

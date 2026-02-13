@@ -1,4 +1,4 @@
-import type { Profile, SessionState } from '../types/pomodoro';
+import type { Profile, SessionState, SuspendedRound } from '../types/pomodoro';
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import PomodoroService from './pomodoroService';
@@ -28,10 +28,12 @@ export class SessionController {
   private listeners: Set<(event: SessionEvent) => void> = new Set();
   private ongoingNotificationInterval: number | null = null;
   private useNativeService: boolean = Capacitor.getPlatform() === 'android';
+  private autoStartIntervalId: number | null = null;
 
   constructor() {
     this.setupNotificationListeners();
     this.setupAppListeners();
+    this.startAutoStartCheck();
   }
 
   private setupNotificationListeners() {
@@ -163,6 +165,7 @@ export class SessionController {
       phaseDuration: phaseDurationSec,
       isActive: true,
       currentActivityTag: activityTag,
+      timeRemaining: this.state?.timeRemaining,
     };
 
     await StorageService.saveSessionState(this.state);
@@ -354,6 +357,91 @@ export class SessionController {
     }
   }
 
+  async suspendRound(): Promise<void> {
+    if (this.state && this.state.isActive && this.state.isWorkPhase && this.state.currentActivityTag) {
+      const remaining = this.getTimeRemaining();
+      const suspendedRound: SuspendedRound = {
+        id: Date.now().toString(),
+        profileId: this.state.profileId,
+        activityTag: this.state.currentActivityTag,
+        timeRemaining: remaining,
+        phaseDuration: this.state.phaseDuration,
+        createdAt: new Date().toISOString(),
+      };
+
+      await StorageService.addSuspendedRound(suspendedRound);
+
+      // Reset current phase timer for the "new round"
+      this.state.elapsedTime = 0;
+      this.state.startTime = Date.now();
+      if (this.profile) {
+        this.state.phaseDuration = this.profile.workDuration * 60;
+      }
+
+      await StorageService.saveSessionState(this.state);
+      this.emit({ type: 'stateChange', state: this.state });
+    }
+  }
+
+  async switchActivityWithSuspension(newTag: string, suspend: boolean): Promise<void> {
+    if (!this.state || !this.profile) return;
+
+    if (suspend && this.state.isActive && this.state.isWorkPhase && this.state.currentActivityTag) {
+      await this.suspendRound();
+    }
+
+    this.state.currentActivityTag = newTag;
+    await StorageService.saveSessionState(this.state);
+
+    if (this.useNativeService) {
+      await PomodoroService.startSession({
+        workDurationMin: this.profile.workDuration,
+        breakDurationMin: this.profile.breakDuration,
+        totalRounds: this.state.totalRounds,
+        profileId: this.profile.id,
+        currentRound: this.state.currentRound,
+        isWorkPhase: this.state.isWorkPhase,
+        phaseStartTimeMillis: this.state.startTime,
+        phaseDurationSec: this.state.phaseDuration,
+        activityTag: newTag || undefined,
+      }).catch(() => { });
+    }
+
+    this.emit({ type: 'stateChange', state: this.state });
+  }
+
+  async resumeSuspendedRound(suspendedRound: SuspendedRound): Promise<void> {
+    if (this.state && this.profile) {
+      this.state.currentActivityTag = suspendedRound.activityTag;
+      this.state.phaseDuration = suspendedRound.phaseDuration;
+      this.state.elapsedTime = 0;
+      this.state.startTime = Date.now() - ((suspendedRound.phaseDuration - suspendedRound.timeRemaining) * 1000);
+      this.state.isActive = true;
+      delete this.state.pausedAt;
+
+      await StorageService.saveSessionState(this.state);
+      await StorageService.removeSuspendedRound(suspendedRound.id);
+
+      if (this.useNativeService) {
+        await PomodoroService.startSession({
+          workDurationMin: this.profile.workDuration,
+          breakDurationMin: this.profile.breakDuration,
+          totalRounds: this.state.totalRounds,
+          profileId: this.profile.id,
+          currentRound: this.state.currentRound,
+          isWorkPhase: this.state.isWorkPhase,
+          phaseStartTimeMillis: this.state.startTime,
+          phaseDurationSec: this.state.phaseDuration,
+          activityTag: this.state.currentActivityTag,
+        }).catch(() => { });
+      }
+
+      this.startTimer();
+      this.startOngoingNotification();
+      this.emit({ type: 'stateChange', state: this.state });
+    }
+  }
+
   private startTimer() {
     if (this.intervalId) {
       clearInterval(this.intervalId);
@@ -433,6 +521,7 @@ export class SessionController {
   dispose() {
     this.stopTimer();
     this.stopOngoingNotification();
+    this.stopAutoStartCheck();
     this.listeners.clear();
     this.removeNotificationListeners();
     this.removeAppListeners();
@@ -477,8 +566,10 @@ export class SessionController {
     this.isHandlingPhaseEnd = true;
 
     try {
-      // Vibrate to signal phase end
-      await NotificationService.vibratePattern();
+      // Vibrate to signal phase end (only if not handled by native service)
+      if (!this.useNativeService) {
+        await NotificationService.vibratePattern();
+      }
 
       // Show notification
       await NotificationService.schedulePhaseEndNotification(
@@ -560,5 +651,62 @@ export class SessionController {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  private startAutoStartCheck() {
+    if (this.autoStartIntervalId) return;
+
+    // Check every minute
+    this.autoStartIntervalId = window.setInterval(() => {
+      this.checkAutoStart();
+    }, 60000);
+
+    // Also check immediately
+    this.checkAutoStart();
+  }
+
+  private stopAutoStartCheck() {
+    if (this.autoStartIntervalId) {
+      clearInterval(this.autoStartIntervalId);
+      this.autoStartIntervalId = null;
+    }
+  }
+
+  private async checkAutoStart() {
+    // If a session is already active, don't auto-start another one
+    if (this.state && this.state.isActive) return;
+
+    const profiles = await StorageService.getProfiles();
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+
+    for (const profile of profiles) {
+      if (profile.autoStartTime) {
+        const [hourStr, minStr] = profile.autoStartTime.split(':');
+        const autoHour = parseInt(hourStr || '0', 10);
+        const autoMin = parseInt(minStr || '0', 10);
+        const autoTimeMinutes = autoHour * 60 + autoMin;
+
+        // If current time is >= auto start time AND it hasn't started today
+        if (currentTimeMinutes >= autoTimeMinutes && profile.lastAutoStartDay !== today) {
+          console.log(`Auto-starting profile: ${profile.name}`);
+
+          // Update profile to mark it as started today
+          const updatedProfile = {
+            ...profile,
+            lastAutoStartDay: today,
+            updatedAt: new Date().toISOString()
+          };
+          await StorageService.updateProfile(updatedProfile);
+
+          // Start the session
+          await this.startSession(updatedProfile);
+          break; // Only start one profile
+        }
+      }
+    }
   }
 }

@@ -1,5 +1,5 @@
 import { Preferences } from '@capacitor/preferences';
-import type { Profile, SessionState, SessionLog, SessionSummary } from '../types/pomodoro';
+import type { Profile, SessionState, SessionLog, SessionSummary, SuspendedRound } from '../types/pomodoro';
 import { DEFAULT_PROFILE } from '../types/pomodoro';
 
 const STORAGE_KEYS = {
@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   SESSION_STATE: 'pomodoro_session_state',
   SESSION_LOGS: 'pomodoro_session_logs',
   SESSION_SUMMARIES: 'pomodoro_session_summaries',
+  SUSPENDED_ROUNDS: 'pomodoro_suspended_rounds',
 };
 
 export class StorageService {
@@ -198,6 +199,54 @@ export class StorageService {
       });
     } catch (error) {
       console.error('Error adding session summary:', error);
+    }
+  }
+
+  // Suspended Rounds Management
+  static async getSuspendedRounds(): Promise<SuspendedRound[]> {
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEYS.SUSPENDED_ROUNDS });
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting suspended rounds:', error);
+      return [];
+    }
+  }
+
+  static async addSuspendedRound(round: SuspendedRound): Promise<void> {
+    try {
+      const rounds = await this.getSuspendedRounds();
+      rounds.push(round);
+      await Preferences.set({
+        key: STORAGE_KEYS.SUSPENDED_ROUNDS,
+        value: JSON.stringify(rounds),
+      });
+    } catch (error) {
+      console.error('Error adding suspended round:', error);
+    }
+  }
+
+  static async removeSuspendedRound(roundId: string): Promise<void> {
+    try {
+      const rounds = await this.getSuspendedRounds();
+      const filtered = rounds.filter(r => r.id !== roundId);
+      await Preferences.set({
+        key: STORAGE_KEYS.SUSPENDED_ROUNDS,
+        value: JSON.stringify(filtered),
+      });
+    } catch (error) {
+      console.error('Error removing suspended round:', error);
+    }
+  }
+
+  static async saveSuspendedRounds(rounds: SuspendedRound[]): Promise<void> {
+    try {
+      await Preferences.set({
+        key: STORAGE_KEYS.SUSPENDED_ROUNDS,
+        value: JSON.stringify(rounds),
+      });
+    } catch (error) {
+      console.error('Error saving suspended rounds:', error);
     }
   }
 }
