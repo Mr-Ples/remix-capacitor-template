@@ -5,6 +5,7 @@ interface LoggingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (notes: string, answers: Record<string, string>, activityTag?: string) => void;
+  onDelete: () => void;
   profile: Profile;
   phaseType: 'work' | 'break';
   roundNumber: number;
@@ -16,6 +17,7 @@ export function LoggingModal({
   isOpen,
   onClose,
   onSubmit,
+  onDelete,
   profile,
   phaseType,
   roundNumber,
@@ -113,12 +115,18 @@ export function LoggingModal({
             ))}
           </div>
 
-          <div className="pt-4">
+          <div className="pt-4 flex gap-3">
             <button
-              className="btn-primary w-full py-4 text-lg"
+              className="btn-secondary flex-1 py-4 text-lg"
+              onClick={onDelete}
+            >
+              Delete
+            </button>
+            <button
+              className="btn-primary flex-1 py-4 text-lg"
               onClick={handleSubmit}
             >
-              Save Session Log
+              Save
             </button>
           </div>
         </div>

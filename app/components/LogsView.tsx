@@ -320,121 +320,171 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
           ) : filteredLogs.length === 0 ? (
             <div className="py-20 text-center text-mutedForeground italic">No logs found matching filters.</div>
           ) : (
-            <div className="space-y-4 pb-8">
-              {filteredLogs.map(log => {
-                const isEditing = editingLogId === log.id;
-                const profile = profiles.find(p => p.id === log.profileId);
+            <div className="space-y-6 pb-8">
+              {(() => {
+                // Group logs by date
+                const logsByDate: { [date: string]: SessionLog[] } = {};
+                filteredLogs.forEach(log => {
+                  const date = new Date(log.phaseEndTime).toISOString().split('T')[0];
+                  if (!logsByDate[date]) {
+                    logsByDate[date] = [];
+                  }
+                  logsByDate[date].push(log);
+                });
 
-                return (
-                  <div key={log.id} className={`p-4 rounded-xl border transition-all ${isEditing ? 'border-accent bg-accent/5' : 'border-white/5 bg-white/5 hover:bg-white-[0.08]'}`}>
-                    {isEditing && editFormData ? (
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center text-xs text-mutedForeground">
-                          <span>Editing Round {log.roundNumber}</span>
-                          <div className="flex gap-4">
-                            <button onClick={() => setEditingLogId(null)} className="text-mutedForeground hover:text-foreground">Cancel</button>
-                            <button onClick={handleSaveEdit} className="text-accent font-bold">Save Changes</button>
-                          </div>
-                        </div>
+                // Render logs grouped by date with separators
+                return Object.entries(logsByDate).map(([date, logsForDate]) => {
+                  const dateObj = new Date(date);
+                  const today = new Date();
+                  const yesterday = new Date(today);
+                  yesterday.setDate(yesterday.getDate() - 1);
 
-                        <div className="space-y-3">
-                          <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Notes</label>
-                          <textarea
-                            className="input-field w-full h-20 text-sm resize-none"
-                            value={editFormData.notes}
-                            onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
-                          />
-                        </div>
+                  let dateLabel = dateObj.toLocaleDateString(undefined, {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  });
 
-                        {profile && profile.activityTags && profile.activityTags.length > 0 && (
-                          <div className="space-y-2">
-                            <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Activity</label>
-                            <select
-                              className="input-field w-full h-9 text-sm"
-                              value={editFormData.activityTag || ''}
-                              onChange={(e) => setEditFormData({ ...editFormData, activityTag: e.target.value || undefined })}
-                            >
-                              <option value="">None</option>
-                              {profile.activityTags.map(tag => (
-                                <option key={tag} value={tag}>{tag}</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
+                  // Add "Today" or "Yesterday" label if applicable
+                  if (dateObj.toDateString() === today.toDateString()) {
+                    dateLabel = `Today — ${dateLabel}`;
+                  } else if (dateObj.toDateString() === yesterday.toDateString()) {
+                    dateLabel = `Yesterday — ${dateLabel}`;
+                  }
 
-                        {profile && profile.questions.length > 0 && (
-                          <div className="space-y-4 pt-2 border-t border-white/5">
-                            <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Follow-up Questions</label>
-                            <div className="space-y-4">
-                              {profile.questions
-                                .map(q => (
-                                  <div key={q.id} className="space-y-2">
-                                    <p className="text-xs font-medium text-foreground/90">{q.text}</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      {q.options.map(opt => (
-                                        <button
-                                          key={opt}
-                                          className={`px-3 py-1.5 rounded-lg text-[10px] transition-all ${editFormData.answers[q.id] === opt
-                                            ? 'bg-accent text-accentForeground font-bold shadow-glow-sm'
-                                            : 'bg-white/5 text-mutedForeground hover:bg-white/10'
-                                            }`}
-                                          onClick={() => handleUpdateAnswer(q.id, opt)}
-                                        >
-                                          {opt}
-                                        </button>
-                                      ))}
+                  return (
+                    <div key={date} className="space-y-4">
+                      {/* Date Separator */}
+                      <div className="flex items-center gap-4 py-2">
+                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/30 to-transparent"></div>
+                        <h3 className="text-sm font-bold uppercase tracking-widest text-accent/90 px-3 py-1 rounded-lg bg-accent/10 border border-accent/20">
+                          {dateLabel}
+                        </h3>
+                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/30 to-transparent"></div>
+                      </div>
+
+                      {/* Logs for this date */}
+                      <div className="space-y-3">
+                        {logsForDate.map(log => {
+                          const isEditing = editingLogId === log.id;
+                          const profile = profiles.find(p => p.id === log.profileId);
+
+                          return (
+                            <div key={log.id} className={`p-4 rounded-xl border transition-all ${isEditing ? 'border-accent bg-accent/5' : 'border-white/5 bg-white/5 hover:bg-white-[0.08]'}`}>
+                              {isEditing && editFormData ? (
+                                <div className="space-y-4">
+                                  <div className="flex justify-between items-center text-xs text-mutedForeground">
+                                    <span>Editing Round {log.roundNumber}</span>
+                                    <div className="flex gap-4">
+                                      <button onClick={() => setEditingLogId(null)} className="text-mutedForeground hover:text-foreground">Cancel</button>
+                                      <button onClick={handleSaveEdit} className="text-accent font-bold">Save Changes</button>
                                     </div>
                                   </div>
-                                ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">Round {log.roundNumber}</span>
-                              {log.activityTag && (
-                                <span className="text-[10px] text-mutedForeground bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
-                                  {log.activityTag}
-                                </span>
+
+                                  <div className="space-y-3">
+                                    <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Notes</label>
+                                    <textarea
+                                      className="input-field w-full h-20 text-sm resize-none"
+                                      value={editFormData.notes}
+                                      onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                                    />
+                                  </div>
+
+                                  {profile && profile.activityTags && profile.activityTags.length > 0 && (
+                                    <div className="space-y-2">
+                                      <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Activity</label>
+                                      <select
+                                        className="input-field w-full h-9 text-sm"
+                                        value={editFormData.activityTag || ''}
+                                        onChange={(e) => setEditFormData({ ...editFormData, activityTag: e.target.value || undefined })}
+                                      >
+                                        <option value="">None</option>
+                                        {profile.activityTags.map(tag => (
+                                          <option key={tag} value={tag}>{tag}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
+
+                                  {profile && profile.questions.length > 0 && (
+                                    <div className="space-y-4 pt-2 border-t border-white/5">
+                                      <label className="text-[10px] uppercase tracking-widest text-mutedForeground">Follow-up Questions</label>
+                                      <div className="space-y-4">
+                                        {profile.questions
+                                          .map(q => (
+                                            <div key={q.id} className="space-y-2">
+                                              <p className="text-xs font-medium text-foreground/90">{q.text}</p>
+                                              <div className="flex flex-wrap gap-2">
+                                                {q.options.map(opt => (
+                                                  <button
+                                                    key={opt}
+                                                    className={`px-3 py-1.5 rounded-lg text-[10px] transition-all ${editFormData.answers[q.id] === opt
+                                                      ? 'bg-accent text-accentForeground font-bold shadow-glow-sm'
+                                                      : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                                                      }`}
+                                                    onClick={() => handleUpdateAnswer(q.id, opt)}
+                                                  >
+                                                    {opt}
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <div className="flex justify-between items-start">
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium">Round {log.roundNumber}</span>
+                                        {log.activityTag && (
+                                          <span className="text-[10px] text-mutedForeground bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
+                                            {log.activityTag}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-mutedForeground">{getProfileName(log.profileId)}</p>
+                                    </div>
+                                    <span className="text-[10px] tabular-nums text-mutedForeground opacity-60">{formatDate(log.phaseEndTime)}</span>
+                                  </div>
+
+                                  {log.notes && (
+                                    <p className="text-sm text-foreground/80 pl-2 border-l border-white/10 leading-relaxed italic line-clamp-2 hover:line-clamp-none transition-all">
+                                      "{log.notes}"
+                                    </p>
+                                  )}
+
+                                  <div className="flex justify-between items-end pt-2 gap-4">
+                                    <div className="flex-1 space-y-2">
+                                      {Object.entries(log.answers).map(([qid, ans]) => {
+                                        const qText = profile?.questions.find(q => q.id === qid)?.text || "Question";
+                                        return (
+                                          <div key={qid} className="flex flex-col gap-0.5">
+                                            <span className="text-[9px] uppercase tracking-wider text-mutedForeground/70">{qText}</span>
+                                            <span className="text-[11px] font-medium text-foreground/90">{ans}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="flex gap-4 py-1 shrink-0">
+                                      <button onClick={() => handleEditLog(log)} className="text-[10px] uppercase tracking-widest text-accent font-bold">Edit</button>
+                                      <button onClick={() => handleDeleteLog(log.id)} className="text-[10px] uppercase tracking-widest text-red-400 font-bold">Delete</button>
+                                    </div>
+                                  </div>
+                                </div>
                               )}
                             </div>
-                            <p className="text-xs text-mutedForeground">{getProfileName(log.profileId)}</p>
-                          </div>
-                          <span className="text-[10px] tabular-nums text-mutedForeground opacity-60">{formatDate(log.phaseEndTime)}</span>
-                        </div>
-
-                        {log.notes && (
-                          <p className="text-sm text-foreground/80 pl-2 border-l border-white/10 leading-relaxed italic line-clamp-2 hover:line-clamp-none transition-all">
-                            "{log.notes}"
-                          </p>
-                        )}
-
-                        <div className="flex justify-between items-end pt-2 gap-4">
-                          <div className="flex-1 space-y-2">
-                            {Object.entries(log.answers).map(([qid, ans]) => {
-                              const qText = profile?.questions.find(q => q.id === qid)?.text || "Question";
-                              return (
-                                <div key={qid} className="flex flex-col gap-0.5">
-                                  <span className="text-[9px] uppercase tracking-wider text-mutedForeground/70">{qText}</span>
-                                  <span className="text-[11px] font-medium text-foreground/90">{ans}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <div className="flex gap-4 py-1 shrink-0">
-                            <button onClick={() => handleEditLog(log)} className="text-[10px] uppercase tracking-widest text-accent font-bold">Edit</button>
-                            <button onClick={() => handleDeleteLog(log.id)} className="text-[10px] uppercase tracking-widest text-red-400 font-bold">Delete</button>
-                          </div>
-                        </div>
+                          );
+                        })}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
         </div>

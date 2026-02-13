@@ -159,6 +159,19 @@ export class StorageService {
     }
   }
 
+  static async deleteSessionLog(logId: string): Promise<void> {
+    try {
+      const logs = await this.getSessionLogs();
+      const filtered = logs.filter(log => log.id !== logId);
+      await Preferences.set({
+        key: STORAGE_KEYS.SESSION_LOGS,
+        value: JSON.stringify(filtered),
+      });
+    } catch (error) {
+      console.error('Error deleting session log:', error);
+    }
+  }
+
   static async clearSessionLogs(): Promise<void> {
     try {
       await Preferences.remove({ key: STORAGE_KEYS.SESSION_LOGS });

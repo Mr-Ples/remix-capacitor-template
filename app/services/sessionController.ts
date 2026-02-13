@@ -161,6 +161,7 @@ export class SessionController {
       totalRounds,
       isWorkPhase,
       startTime: phaseStartTimeMillis,
+      sessionStartTime: Date.now(), // Track when the entire session started
       elapsedTime: elapsedTimeSec,
       phaseDuration: phaseDurationSec,
       isActive: true,
@@ -229,6 +230,7 @@ export class SessionController {
           totalRounds: nativeState.totalRounds ?? this.profile.rounds,
           isWorkPhase: nativeState.isWorkPhase ?? true,
           startTime,
+          sessionStartTime: startTime, // Use phase start time as session start for resumed sessions
           elapsedTime,
           phaseDuration: phaseDurationSec,
           isActive: true,
@@ -264,6 +266,7 @@ export class SessionController {
     this.state = {
       ...savedState,
       elapsedTime: timeSinceLastSave,
+      sessionStartTime: savedState.sessionStartTime ?? savedState.startTime, // Fallback for old sessions
     };
 
     await NotificationService.initialize();
@@ -530,10 +533,13 @@ export class SessionController {
   private appListener: any = null;
 
   private async setupAppListeners() {
-    this.appListener = await App.addListener('appStateChange', (state: { isActive: boolean }) => {
+    this.appListener = await App.addListener('appStateChange', async (state: { isActive: boolean }) => {
       if (state.isActive) {
         // App resumed - force immediate update
-        if (this.state && this.state.isActive) {
+        if (this.useNativeService) {
+          await this.syncWithNative();
+        } else if (this.state && this.state.isActive) {
+          // Web wall-clock catch-up
           const now = Date.now();
           const newElapsed = Math.floor((now - this.state.startTime) / 1000);
 
@@ -545,11 +551,69 @@ export class SessionController {
           if (this.state.elapsedTime >= this.state.phaseDuration) {
             this.handlePhaseEnd();
           } else {
+            this.startTimer();
+            this.startOngoingNotification();
             this.emit({ type: 'tick', state: this.state });
           }
         }
+      } else {
+        // App backgrounded - STOP JS logic to avoid conflicts with native service
+        console.log('App backgrounded - stopping JS timers');
+        this.stopTimer();
+        this.stopOngoingNotification();
       }
     });
+  }
+
+  private async syncWithNative() {
+    if (!this.useNativeService) return;
+
+    try {
+      const nativeState = await PomodoroService.getSessionState();
+      console.log('Syncing with native state:', nativeState);
+
+      if (nativeState.isActive) {
+        // Native is the source of truth
+        const phaseDurationSec = nativeState.phaseDurationSec ?? 0;
+        const timeRemainingSec = nativeState.timeRemainingSec ?? 0;
+        const elapsedTime = Math.max(0, phaseDurationSec - timeRemainingSec);
+        const phaseEndTimeMillis = nativeState.phaseEndTimeMillis ?? Date.now();
+        const startTime = phaseEndTimeMillis - phaseDurationSec * 1000;
+
+        this.state = {
+          ...this.state,
+          profileId: nativeState.profileId || this.state?.profileId || '',
+          currentRound: nativeState.currentRound ?? 1,
+          totalRounds: nativeState.totalRounds ?? this.state?.totalRounds ?? 0,
+          isWorkPhase: nativeState.isWorkPhase ?? true,
+          startTime,
+          sessionStartTime: this.state?.sessionStartTime ?? startTime, // Preserve session start time
+          elapsedTime,
+          phaseDuration: phaseDurationSec,
+          isActive: true,
+          currentActivityTag: nativeState.activityTag || this.state?.currentActivityTag,
+        };
+
+        // Resume JS UI updates
+        this.startTimer();
+        this.startOngoingNotification();
+        this.emit({ type: 'stateChange', state: this.state });
+
+        // Check if phase already ended and native is waiting for us to show the log
+        if (nativeState.pendingLog) {
+          this.emit({ type: 'phaseEnd', state: this.state });
+        }
+      } else if (this.state && this.state.isActive) {
+        // JS thought it was active but native says no - sync to inactive
+        console.warn('Native session not active, stopping JS session');
+        this.state.isActive = false;
+        this.stopTimer();
+        this.stopOngoingNotification();
+        this.emit({ type: 'stateChange', state: this.state });
+      }
+    } catch (e) {
+      console.error('Error syncing with native service:', e);
+    }
   }
 
   private removeAppListeners() {

@@ -24,6 +24,13 @@ export function PomodoroTimer() {
   const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
   const [suspendedRounds, setSuspendedRounds] = useState<SuspendedRound[]>([]);
 
+  // Touch gesture state for swipe navigation
+  const [touchStartX, setTouchStartX] = useState<number>(0);
+  const [touchEndX, setTouchEndX] = useState<number>(0);
+
+  // Track current session start time (persists even when session stops)
+  const [currentSessionStartTime, setCurrentSessionStartTime] = useState<number | null>(null);
+
   useEffect(() => {
     const controller = SessionController.getInstance();
     controllerRef.current = controller;
@@ -32,6 +39,10 @@ export function PomodoroTimer() {
       if (event.type === 'tick' || event.type === 'stateChange') {
         setSessionState(event.state);
         setTimeRemaining(controller.getTimeRemaining());
+        // Update current session start time when session state changes
+        if (event.state?.sessionStartTime) {
+          setCurrentSessionStartTime(event.state.sessionStartTime);
+        }
       } else if (event.type === 'phaseEnd') {
         // Capture the completed round number before state transitions
         setLoggingRoundNumber(event.state.currentRound);
@@ -139,6 +150,8 @@ export function PomodoroTimer() {
     if (sessionState && !sessionState.isActive) {
       await controllerRef.current.unpauseSession();
     } else {
+      // Starting a new session - update the session start time
+      setCurrentSessionStartTime(Date.now());
       await controllerRef.current.startSession(profile, selectedActivityTag || undefined);
     }
   };
@@ -229,8 +242,54 @@ export function PomodoroTimer() {
     setCurrentLogId(null);
   };
 
+  const handleLogDelete = async () => {
+    if (currentLogId) {
+      await StorageService.deleteSessionLog(currentLogId);
+      await loadSessionLogs(); // Refresh logs
+    }
+
+    // Clear any native pending log marker on Android
+    if (Capacitor.getPlatform() === 'android') {
+      try {
+        await PomodoroService.clearPendingLog();
+      } catch (e) {
+        console.error('Error clearing native pending log', e);
+      }
+    }
+    setShowLoggingModal(false);
+    setCurrentLogId(null);
+  };
+
   const handleProfileChange = (newProfile: Profile) => {
     setProfile(newProfile);
+  };
+
+  // Touch event handlers for swipe navigation
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.touches[0].clientX);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    setTouchEndX(e.touches[0].clientX);
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX === 0 || touchEndX === 0) return;
+
+    const swipeDistance = touchStartX - touchEndX;
+    const minSwipeDistance = 50; // Minimum swipe distance in pixels
+
+    if (swipeDistance > minSwipeDistance) {
+      // Swiped left - go to next slide
+      if (activeSlide === 0) setActiveSlide(1);
+    } else if (swipeDistance < -minSwipeDistance) {
+      // Swiped right - go to previous slide
+      if (activeSlide === 1) setActiveSlide(0);
+    }
+
+    // Reset touch positions
+    setTouchStartX(0);
+    setTouchEndX(0);
   };
 
   const formatTime = (seconds: number): string => {
@@ -249,19 +308,21 @@ export function PomodoroTimer() {
   }
   const getCompletedRoundsForTag = (tag: string | undefined): number => {
     if (!tag) return 0;
-    const today = new Date().toDateString();
+    // Filter by session start time instead of by day
+    if (!currentSessionStartTime) return 0;
     return sessionLogs.filter(log => {
-      const logDate = new Date(log.phaseEndTime).toDateString();
-      return log.profileId === profile.id && log.activityTag === tag && logDate === today;
+      const logTime = new Date(log.phaseEndTime).getTime();
+      return log.profileId === profile.id && log.activityTag === tag && logTime >= currentSessionStartTime;
     }).length;
   };
 
   const getUncategorizedRounds = (): number => {
-    const today = new Date().toDateString();
+    // Filter by session start time instead of by day
+    if (!currentSessionStartTime) return 0;
     const allTags = profile.activityTags || [];
     return sessionLogs.filter(log => {
-      const logDate = new Date(log.phaseEndTime).toDateString();
-      if (log.profileId !== profile.id || logDate !== today) return false;
+      const logTime = new Date(log.phaseEndTime).getTime();
+      if (log.profileId !== profile.id || logTime < currentSessionStartTime) return false;
       // Strictly "uncategorized" if no tag OR tag is not in the official list
       return !log.activityTag || !allTags.includes(log.activityTag);
     }).length;
@@ -582,7 +643,12 @@ export function PomodoroTimer() {
           </button>
         </div>
 
-        <div className="p-6 relative">
+        <div
+          className="p-6 relative min-h-[400px]"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
           {activeSlide === 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 animate-in fade-in slide-in-from-right-4 duration-300">
               {(profile.activityTags || []).map((tag) => {
@@ -666,10 +732,12 @@ export function PomodoroTimer() {
                 <svg className="w-full h-full transform -rotate-90 overflow-visible">
                   <circle cx="96" cy="96" r="80" fill="transparent" stroke="currentColor" strokeWidth="12" className="text-white/5" />
                   {(() => {
-                    const today = new Date().toDateString();
-                    const todayLogs = sessionLogs
-                      .filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).toDateString() === today)
-                      .sort((a, b) => new Date(a.phaseEndTime).getTime() - new Date(b.phaseEndTime).getTime());
+                    // Filter by session start time instead of by day
+                    const todayLogs = currentSessionStartTime
+                      ? sessionLogs
+                        .filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= currentSessionStartTime)
+                        .sort((a, b) => new Date(a.phaseEndTime).getTime() - new Date(b.phaseEndTime).getTime())
+                      : [];
 
                     if (todayLogs.length === 0) return null;
 
@@ -700,7 +768,9 @@ export function PomodoroTimer() {
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-3xl font-bold tabular-nums">
-                    {sessionLogs.filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).toDateString() === new Date().toDateString()).length}
+                    {currentSessionStartTime
+                      ? sessionLogs.filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= currentSessionStartTime).length
+                      : 0}
                   </span>
                   <span className="text-[10px] uppercase tracking-widest text-mutedForeground">Rounds</span>
                 </div>
@@ -734,6 +804,7 @@ export function PomodoroTimer() {
             setCurrentLogId(null);
           }}
           onSubmit={handleLogSubmit}
+          onDelete={handleLogDelete}
           profile={profile}
           phaseType={loggingPhaseType}
           roundNumber={loggingRoundNumber}

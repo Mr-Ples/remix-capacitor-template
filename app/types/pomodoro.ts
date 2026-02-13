@@ -51,7 +51,8 @@ export interface SessionState {
   currentRound: number;
   totalRounds: number;
   isWorkPhase: boolean;
-  startTime: number; // timestamp
+  startTime: number; // timestamp of current phase start
+  sessionStartTime: number; // timestamp of when the entire session started
   pausedAt?: number; // timestamp if paused
   elapsedTime: number; // in seconds
   phaseDuration: number; // in seconds
