@@ -1,15 +1,38 @@
-import type { Profile, SessionState, SuspendedRound } from '../types/pomodoro';
+import type { Profile, SessionState, SuspendedRound, SessionLog } from '../types/pomodoro';
+import type { PomodoroSessionState } from './pomodoroService';
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import PomodoroService from './pomodoroService';
 import { StorageService } from './storage';
 import { NotificationService } from './notifications';
 
-export type SessionEventType = 'tick' | 'phaseEnd' | 'sessionEnd' | 'stateChange';
+/**
+ * Session lifecycle rules:
+ * - A new session starts ONLY when: user taps Start, or auto-start at configured start time.
+ * - A session ends ONLY when: user taps End, last round completes, or end time is reached.
+ * - We never start or stop a session when app goes to background/foreground; we only sync
+ *   or resume. When the native service completes all rounds in background we end the
+ *   session on JS (sessionEndedNaturally) and do NOT restart the timer.
+ */
+
+export type SessionEventType = 'tick' | 'phaseEnd' | 'sessionEnd' | 'stateChange' | 'logsUpdated' | 'pendingLogsToShow';
+
+/** One completed round to show in the logging modal (for background-completed rounds). */
+export interface PendingLogToShow {
+  logId: string;
+  roundNumber: number;
+  phaseType: 'work' | 'break';
+  activityTag?: string;
+  profileId: string;
+  sessionStartTime: string;
+  totalRounds: number;
+}
 
 export interface SessionEvent {
   type: SessionEventType;
-  state: SessionState;
+  state: SessionState | null;
+  /** When type is 'pendingLogsToShow', show the logging modal for each of these in sequence. */
+  pendingLogsToShow?: PendingLogToShow[];
 }
 
 export class SessionController {
@@ -246,6 +269,7 @@ export class SessionController {
         this.startTimer();
         this.startOngoingNotification();
         this.emit({ type: 'stateChange', state: this.state });
+        await this.processPendingLogsFromNative(nativeState);
         return true;
       }
     }
@@ -637,10 +661,16 @@ export class SessionController {
         this.startOngoingNotification();
         this.emit({ type: 'stateChange', state: this.state });
 
-        // Check if phase already ended and native is waiting for us to show the log
-        if (nativeState.pendingLog) {
-          this.emit({ type: 'phaseEnd', state: this.state });
+        // Save any rounds that completed while app was in background
+        await this.processPendingLogsFromNative(nativeState);
+      } else if (nativeState.sessionEndedNaturally) {
+        // Native completed all rounds while app was in background. End session on JS;
+        // do NOT restart native or we would effectively "start a new session" from stale state.
+        await this.processPendingLogsFromNative(nativeState);
+        if (this.state) {
+          this.emit({ type: 'sessionEnd', state: this.state });
         }
+        await this.stopSession();
       } else if (this.state && this.state.isActive) {
         // Native says not active (e.g. process was killed) but we have an active session.
         // Session must ONLY end when the user explicitly ends it - never on app close/background.
@@ -677,6 +707,67 @@ export class SessionController {
     if (this.appListener) {
       this.appListener.remove();
       this.appListener = null;
+    }
+  }
+
+  /**
+   * Persist all completed phases from native (rounds that finished while app was in background).
+   * Uses current this.state for profileId and sessionStartTime. Call before clearing state.
+   */
+  async processPendingLogsFromNative(nativeState: PomodoroSessionState): Promise<void> {
+    const list = nativeState.pendingLogs?.length
+      ? nativeState.pendingLogs
+      : nativeState.pendingLog
+        ? [{
+            roundNumber: nativeState.pendingLog.roundNumber,
+            phaseType: nativeState.pendingLog.phaseType,
+            phaseEndTimeMillis: Date.now(),
+            activityTag: nativeState.activityTag,
+          }]
+        : [];
+    if (list.length === 0) return;
+
+    const profileId = this.state?.profileId ?? nativeState.profileId ?? '';
+    const sessionStartTime = this.state?.sessionStartTime ?? nativeState.sessionStartTime ?? Date.now();
+    const sessionStartTimeISO = new Date(sessionStartTime).toISOString();
+    const totalRounds = this.state?.totalRounds ?? nativeState.totalRounds ?? 0;
+    const toShow: PendingLogToShow[] = [];
+
+    // Native adds one pending log per phase (work + break). We only want one log per round to match
+    // foreground behavior: log the work phase as the round completion. Skip break-phase entries.
+    const roundEntries = list.filter((e: { phaseType?: string }) => e.phaseType === 'work');
+
+    for (let i = 0; i < roundEntries.length; i++) {
+      const entry = roundEntries[i];
+      const logId = `${sessionStartTime}-${entry.roundNumber}-work-${i}-${Date.now()}`;
+      const log: SessionLog = {
+        id: logId,
+        profileId,
+        sessionStartTime: sessionStartTimeISO,
+        roundNumber: entry.roundNumber,
+        phaseType: 'work',
+        phaseEndTime: entry.phaseEndTimeMillis
+          ? new Date(entry.phaseEndTimeMillis).toISOString()
+          : new Date().toISOString(),
+        notes: '',
+        answers: {},
+        activityTag: entry.activityTag,
+      };
+      await StorageService.addSessionLog(log);
+      toShow.push({
+        logId,
+        roundNumber: entry.roundNumber,
+        phaseType: 'work' as const,
+        activityTag: entry.activityTag,
+        profileId,
+        sessionStartTime: sessionStartTimeISO,
+        totalRounds,
+      });
+    }
+    await PomodoroService.clearPendingLog();
+    this.emit({ type: 'logsUpdated', state: this.state });
+    if (toShow.length > 0) {
+      this.emit({ type: 'pendingLogsToShow', state: this.state, pendingLogsToShow: toShow });
     }
   }
 

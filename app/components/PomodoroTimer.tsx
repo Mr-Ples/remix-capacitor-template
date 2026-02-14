@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Capacitor } from '@capacitor/core';
 import type { Profile, SessionState, SessionLog, SuspendedRound } from '../types/pomodoro';
-import { SessionController } from '../services/sessionController';
+import { SessionController, type PendingLogToShow } from '../services/sessionController';
 import PomodoroService from '../services/pomodoroService';
 import { StorageService } from '../services/storage';
 import { LoggingModal } from './LoggingModal';
@@ -20,11 +20,15 @@ export function PomodoroTimer() {
   const [currentLogId, setCurrentLogId] = useState<string | null>(null);
   const [activeSlide, setActiveSlide] = useState(0);
   const controllerRef = useRef<SessionController | null>(null);
+  /** Ref so phaseEnd handler can see if modal is already open (avoid stale closure). */
+  const loggingModalOpenRef = useRef(false);
 
   const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
   const [suspendedRounds, setSuspendedRounds] = useState<SuspendedRound[]>([]);
 
   const [completedPhaseState, setCompletedPhaseState] = useState<SessionState | null>(null);
+  /** Queue of background-completed rounds to show in the logging modal one after another. */
+  const [pendingLogsModalQueue, setPendingLogsModalQueue] = useState<PendingLogToShow[]>([]);
 
   // Touch gesture state for swipe navigation
   const [touchStartX, setTouchStartX] = useState<number>(0);
@@ -48,28 +52,59 @@ export function PomodoroTimer() {
     return new Date(latest.sessionStartTime).getTime();
   }, [sessionState?.isActive, sessionState?.sessionStartTime, currentSessionStartTime, profile?.id, sessionLogs]);
 
+  function pendingLogToShowAsState(item: PendingLogToShow): SessionState {
+    return {
+      profileId: item.profileId,
+      currentRound: item.roundNumber,
+      totalRounds: item.totalRounds,
+      isWorkPhase: item.phaseType === 'work',
+      startTime: 0,
+      sessionStartTime: new Date(item.sessionStartTime).getTime(),
+      elapsedTime: 0,
+      phaseDuration: 0,
+      isActive: false,
+      currentActivityTag: item.activityTag,
+    };
+  }
+
+  function advancePendingLogsModalOrClose() {
+    setPendingLogsModalQueue((prev) => {
+      const rest = prev.slice(1);
+      if (rest.length === 0) {
+        loggingModalOpenRef.current = false;
+        setShowLoggingModal(false);
+        setCurrentLogId(null);
+        setCompletedPhaseState(null);
+        return [];
+      }
+      loggingModalOpenRef.current = true;
+      setCompletedPhaseState(pendingLogToShowAsState(rest[0]));
+      setCurrentLogId(rest[0].logId);
+      setShowLoggingModal(true);
+      return rest;
+    });
+  }
+
   useEffect(() => {
     const controller = SessionController.getInstance();
     controllerRef.current = controller;
 
     const cleanupListener = controller.addEventListener((event) => {
       if (event.type === 'tick' || event.type === 'stateChange') {
-        setSessionState(event.state);
-        setTimeRemaining(controller.getTimeRemaining());
-        // Update current session start time when session state changes
-        if (event.state?.sessionStartTime) {
-          setCurrentSessionStartTime(event.state.sessionStartTime);
+        if (event.state) {
+          setSessionState(event.state);
+          if (event.state.sessionStartTime != null) {
+            setCurrentSessionStartTime(event.state.sessionStartTime);
+          }
         }
-      } else if (event.type === 'phaseEnd') {
-        // Capture the state of the COMPLETED round/phase for the logging modal
-        setCompletedPhaseState(event.state);
-
-        // AUTO-SAVE LOG
+        setTimeRemaining(controller.getTimeRemaining());
+      } else if (event.type === 'phaseEnd' && event.state) {
+        const sessionStartTimeISO = new Date(event.state.sessionStartTime).toISOString();
         const newLogId = Date.now().toString();
         const autoLog: SessionLog = {
           id: newLogId,
           profileId: event.state.profileId,
-          sessionStartTime: new Date(event.state.sessionStartTime).toISOString(),
+          sessionStartTime: sessionStartTimeISO,
           roundNumber: event.state.currentRound,
           phaseType: event.state.isWorkPhase ? 'work' : 'break',
           phaseEndTime: new Date().toISOString(),
@@ -78,21 +113,56 @@ export function PomodoroTimer() {
           activityTag: event.state.currentActivityTag,
         };
 
-        StorageService.addSessionLog(autoLog).then(async () => {
-          setCurrentLogId(newLogId);
-          await loadSessionLogs();
-        });
-
-        setShowLoggingModal(true);
-        // Do NOT setSessionState(event.state) here. The controller will emit a 'stateChange'
-        // event with the new state, which will update sessionState.
-        // This prevents race conditions and ensures sessionState reflects the *current* phase.
+        if (loggingModalOpenRef.current) {
+          // Modal already open (user still on a previous round): queue this round instead of replacing
+          StorageService.addSessionLog(autoLog).then(() => loadSessionLogs());
+          setPendingLogsModalQueue((prev) => [
+            ...prev,
+            {
+              logId: newLogId,
+              roundNumber: event.state!.currentRound,
+              phaseType: event.state!.isWorkPhase ? 'work' : 'break',
+              activityTag: event.state!.currentActivityTag,
+              profileId: event.state!.profileId,
+              sessionStartTime: sessionStartTimeISO,
+              totalRounds: event.state!.totalRounds,
+            },
+          ]);
+        } else {
+          // No modal open: show this round and put it in queue so advance works
+          const firstItem: PendingLogToShow = {
+            logId: newLogId,
+            roundNumber: event.state.currentRound,
+            phaseType: event.state.isWorkPhase ? 'work' : 'break',
+            activityTag: event.state.currentActivityTag,
+            profileId: event.state.profileId,
+            sessionStartTime: sessionStartTimeISO,
+            totalRounds: event.state.totalRounds,
+          };
+          setPendingLogsModalQueue([firstItem]);
+          setCompletedPhaseState(event.state);
+          StorageService.addSessionLog(autoLog).then(async () => {
+            setCurrentLogId(newLogId);
+            await loadSessionLogs();
+          });
+          setShowLoggingModal(true);
+          loggingModalOpenRef.current = true;
+        }
         setTimeRemaining(controller.getTimeRemaining());
       } else if (event.type === 'sessionEnd') {
         alert('Session Complete! Great work!');
         setSessionState(null);
         setTimeRemaining(0);
         loadSessionLogs();
+      } else if (event.type === 'logsUpdated') {
+        loadSessionLogs();
+      } else if (event.type === 'pendingLogsToShow' && event.pendingLogsToShow?.length) {
+        setPendingLogsModalQueue(event.pendingLogsToShow);
+        const first = event.pendingLogsToShow[0];
+        setCompletedPhaseState(pendingLogToShowAsState(first));
+        setCurrentLogId(first.logId);
+        setShowLoggingModal(true);
+        loggingModalOpenRef.current = true;
       }
     });
 
@@ -112,53 +182,11 @@ export function PomodoroTimer() {
           setTimeRemaining(controller.getTimeRemaining());
           setSelectedActivityTag(state.currentActivityTag || '');
         }
-
-        // On Android, check for pending logs
-        if (Capacitor.getPlatform() === 'android') {
-          try {
-            const nativeState = await PomodoroService.getSessionState();
-            if (nativeState.pendingLog) {
-              // Set completedPhaseState for the pending log
-              setCompletedPhaseState({
-                profileId: nativeState.profileId || resumedProfile?.id || 'unknown',
-                currentRound: nativeState.pendingLog.roundNumber,
-                totalRounds: nativeState.totalRounds ?? 0, // Fallback, should be provided by nativeState
-                isWorkPhase: nativeState.pendingLog.phaseType === 'work',
-                startTime: Date.now(), // Placeholder, not strictly needed for display
-                sessionStartTime: nativeState.sessionStartTime || Date.now(),
-                elapsedTime: 0, // Placeholder
-                phaseDuration: 0, // Placeholder
-                isActive: false, // It's a pending log from a completed phase
-                currentActivityTag: nativeState.activityTag,
-              });
-
-              // Check/create log logic (simplified)
-              const newLogId = Date.now().toString();
-              const autoLog: SessionLog = {
-                id: newLogId,
-                profileId: nativeState.profileId || resumedProfile?.id || 'unknown',
-                sessionStartTime: new Date(nativeState.sessionStartTime || Date.now()).toISOString(),
-                roundNumber: nativeState.pendingLog.roundNumber,
-                phaseType: nativeState.pendingLog.phaseType as 'work' | 'break',
-                phaseEndTime: new Date().toISOString(),
-                notes: '',
-                answers: {},
-                activityTag: nativeState.activityTag,
-              };
-
-              await StorageService.addSessionLog(autoLog);
-              setCurrentLogId(newLogId);
-              setShowLoggingModal(true);
-            }
-          } catch (e) {
-            console.error('Error checking native pending log', e);
-          }
-        }
       }
+      await loadSessionLogs();
     };
 
     init();
-    loadSessionLogs();
 
     return () => {
       cleanupListener();
@@ -265,8 +293,7 @@ export function PomodoroTimer() {
         console.error('Error clearing native pending log', e);
       }
     }
-    setShowLoggingModal(false);
-    setCurrentLogId(null);
+    advancePendingLogsModalOrClose();
   };
 
   const handleLogDelete = async () => {
@@ -283,8 +310,7 @@ export function PomodoroTimer() {
         console.error('Error clearing native pending log', e);
       }
     }
-    setShowLoggingModal(false);
-    setCurrentLogId(null);
+    advancePendingLogsModalOrClose();
   };
 
   const handleProfileChange = (newProfile: Profile) => {
@@ -839,9 +865,7 @@ export function PomodoroTimer() {
         <LoggingModal
           isOpen={showLoggingModal}
           onClose={() => {
-            setShowLoggingModal(false);
-            setCurrentLogId(null);
-            setCompletedPhaseState(null); // Clear completed state when modal closes
+            advancePendingLogsModalOrClose();
           }}
           onSubmit={handleLogSubmit}
           onDelete={handleLogDelete}

@@ -17,8 +17,12 @@ import android.os.Vibrator;
 import android.os.VibratorManager;
 import androidx.core.app.NotificationCompat;
 import com.getcapacitor.JSObject;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class PomodoroForegroundService extends Service {
     public static final String ACTION_START_SESSION = "START_SESSION";
@@ -27,6 +31,8 @@ public class PomodoroForegroundService extends Service {
     private static final int NOTIFICATION_ID = 1;
 
     private static boolean isActive = false;
+    /** True when the session was stopped because all rounds completed (not user stop/kill). */
+    private static boolean sessionEndedNaturally = false;
     private static String profileId = "";
     private static int totalRounds = 4;
     private static int currentRound = 1;
@@ -36,7 +42,8 @@ public class PomodoroForegroundService extends Service {
     private static int workDurationSec = 0;
     private static int breakDurationSec = 0;
     private static String activityTag = "";
-    private static JSObject pendingLog = null;
+    /** Queue of completed phases to be saved when app comes to foreground (or session ends). */
+    private static List<JSONObject> pendingLogs = new ArrayList<>();
 
     private Handler handler;
     private Runnable updateRunnable;
@@ -79,7 +86,8 @@ public class PomodoroForegroundService extends Service {
 
             phaseEndTimeMillis = phaseStartTimeMillis + (phaseDurationSec * 1000L);
             isActive = true;
-            pendingLog = null;
+            sessionEndedNaturally = false;
+            pendingLogs.clear();
 
             startForeground(NOTIFICATION_ID, createNotification());
             startUpdateLoop();
@@ -119,10 +127,17 @@ public class PomodoroForegroundService extends Service {
     }
 
     private void handlePhaseEnd() {
-        // Store pending log for the completed phase
-        pendingLog = new JSObject();
-        pendingLog.put("roundNumber", currentRound);
-        pendingLog.put("phaseType", isWorkPhase ? "work" : "break");
+        // Queue pending log for the completed phase (so multiple rounds in background are all saved)
+        try {
+            JSONObject entry = new JSONObject();
+            entry.put("roundNumber", currentRound);
+            entry.put("phaseType", isWorkPhase ? "work" : "break");
+            entry.put("phaseEndTimeMillis", System.currentTimeMillis());
+            entry.put("activityTag", activityTag != null ? activityTag : "");
+            pendingLogs.add(entry);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
 
         // Show phase complete notification
         showPhaseCompleteNotification();
@@ -141,6 +156,7 @@ public class PomodoroForegroundService extends Service {
                 vibrate(true);
                 currentRound++;
                 if (currentRound > totalRounds) {
+                    sessionEndedNaturally = true;
                     stopSession();
                     return;
                 }
@@ -153,6 +169,7 @@ public class PomodoroForegroundService extends Service {
             vibrate(true);
             currentRound++;
             if (currentRound > totalRounds) {
+                sessionEndedNaturally = true;
                 stopSession();
                 return;
             }
@@ -282,6 +299,9 @@ public class PomodoroForegroundService extends Service {
         JSONObject state = new JSONObject();
         try {
             state.put("isActive", isActive);
+            if (!isActive) {
+                state.put("sessionEndedNaturally", sessionEndedNaturally);
+            }
             if (isActive) {
                 state.put("profileId", profileId);
                 state.put("totalRounds", totalRounds);
@@ -293,12 +313,12 @@ public class PomodoroForegroundService extends Service {
                 state.put("timeRemainingSec", (int) (timeRemainingMs / 1000));
                 state.put("phaseDurationSec", phaseDurationSec);
                 state.put("activityTag", activityTag);
-                if (pendingLog != null) {
-                    JSONObject pendingLogJson = new JSONObject();
-                    pendingLogJson.put("roundNumber", pendingLog.getInt("roundNumber"));
-                    pendingLogJson.put("phaseType", pendingLog.getString("phaseType"));
-                    state.put("pendingLog", pendingLogJson);
+                if (!pendingLogs.isEmpty()) {
+                    state.put("pendingLogs", new JSONArray(pendingLogs));
                 }
+            }
+            if (!isActive && !pendingLogs.isEmpty()) {
+                state.put("pendingLogs", new JSONArray(pendingLogs));
             }
         } catch (JSONException e) {
             e.printStackTrace();
@@ -307,6 +327,6 @@ public class PomodoroForegroundService extends Service {
     }
 
     public static void clearPendingLog() {
-        pendingLog = null;
+        pendingLogs.clear();
     }
 }
