@@ -37,6 +37,10 @@ export function PomodoroTimer() {
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const sessionMenuRef = useRef<HTMLDivElement>(null);
 
+  // Ready-state actions menu (triple-dot next to Start Session)
+  const [readyMenuOpen, setReadyMenuOpen] = useState(false);
+  const readyMenuRef = useRef<HTMLDivElement>(null);
+
   // Touch gesture state for swipe navigation
   const [touchStartX, setTouchStartX] = useState<number>(0);
   const [touchEndX, setTouchEndX] = useState<number>(0);
@@ -103,6 +107,12 @@ export function PomodoroTimer() {
           if (event.state.sessionStartTime != null) {
             setCurrentSessionStartTime(event.state.sessionStartTime);
           }
+          // Keep displayed profile in sync when state came from native (e.g. "Start now" from notification)
+          const controllerProfile = controller.getCurrentProfile();
+          if (controllerProfile) setProfile(controllerProfile);
+        } else {
+          setSessionState(null);
+          setTimeRemaining(0);
         }
         setTimeRemaining(controller.getTimeRemaining());
       } else if (event.type === 'phaseEnd' && event.state) {
@@ -191,6 +201,10 @@ export function PomodoroTimer() {
         }
       }
       await loadSessionLogs();
+      // Start the scheduler foreground service if a profile has auto-start (Android)
+      await controller.startSchedulerServiceIfNeeded();
+      // Start polling native state so notification Start/Stop updates the UI while app is open
+      await controller.ensureForegroundPolling();
     };
 
     init();
@@ -210,6 +224,17 @@ export function PomodoroTimer() {
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, [sessionMenuOpen]);
+
+  useEffect(() => {
+    if (!readyMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (readyMenuRef.current && !readyMenuRef.current.contains(e.target as Node)) {
+        setReadyMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [readyMenuOpen]);
 
   const loadSessionLogs = async () => {
     const logs = await StorageService.getSessionLogs();
@@ -317,6 +342,10 @@ export function PomodoroTimer() {
     if (Capacitor.getPlatform() === 'android') {
       try {
         await PomodoroService.clearPendingLog();
+        // Dismiss only this round's phase-complete notification (ID = 1000 + roundNumber)
+        if (completedPhaseState?.currentRound != null) {
+          await PomodoroService.cancelPhaseCompleteNotification({ roundNumber: completedPhaseState.currentRound });
+        }
       } catch (e) {
         console.error('Error clearing native pending log', e);
       }
@@ -330,10 +359,13 @@ export function PomodoroTimer() {
       await loadSessionLogs(); // Refresh logs
     }
 
-    // Clear any native pending log marker on Android
+    // Clear any native pending log marker on Android and dismiss this round's notification
     if (Capacitor.getPlatform() === 'android') {
       try {
         await PomodoroService.clearPendingLog();
+        if (completedPhaseState?.currentRound != null) {
+          await PomodoroService.cancelPhaseCompleteNotification({ roundNumber: completedPhaseState.currentRound });
+        }
       } catch (e) {
         console.error('Error clearing native pending log', e);
       }
@@ -343,6 +375,7 @@ export function PomodoroTimer() {
 
   const handleProfileChange = (newProfile: Profile) => {
     setProfile(newProfile);
+    SessionController.getInstance().startSchedulerServiceIfNeeded().catch(() => {});
   };
 
   // Touch event handlers for swipe navigation
@@ -785,21 +818,35 @@ export function PomodoroTimer() {
                 )}
               </div>
             )}
-            {(!profile.activityTags || profile.activityTags.length === 0) && (
-              <button
-                type="button"
-                className="btn-secondary p-3 rounded-lg"
-                onClick={() => setShowActivityNotesModal(true)}
-                title="Notes & tasks"
-                aria-label="Notes & tasks"
-              >
-                <FilePen size={20} strokeWidth={2} aria-hidden />
+            <div className="flex items-stretch gap-2 w-full max-w-xs h-12">
+              <button className="btn-primary flex-1 h-full text-lg min-w-0" onClick={handleStartSession}>
+                Start Session
               </button>
-            )}
-
-            <button className="btn-primary w-full max-w-xs text-lg" onClick={handleStartSession}>
-              Start Session
-            </button>
+              <div className="relative shrink-0 flex h-full" ref={readyMenuRef}>
+                <button
+                  type="button"
+                  className="btn-secondary h-full px-4 rounded-lg flex items-center justify-center"
+                  onClick={(e) => { e.stopPropagation(); setReadyMenuOpen((o) => !o); }}
+                  title="More actions"
+                  aria-label="More actions"
+                  aria-expanded={readyMenuOpen}
+                >
+                  <MoreVertical size={20} strokeWidth={2} aria-hidden />
+                </button>
+                {readyMenuOpen && (
+                  <div className="absolute right-0 top-full z-10 mt-1 min-w-[10rem] rounded-lg border border-white/10 bg-background/95 py-1 shadow-lg backdrop-blur">
+                    <button
+                      type="button"
+                      className="w-full px-4 py-2 text-left text-sm text-mutedForeground hover:bg-white/5 hover:text-foreground flex items-center gap-2"
+                      onClick={() => { setShowActivityNotesModal(true); setReadyMenuOpen(false); }}
+                    >
+                      <FilePen size={16} strokeWidth={2} aria-hidden />
+                      Notes & tasks
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

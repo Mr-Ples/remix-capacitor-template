@@ -4,6 +4,8 @@ export interface PomodoroSessionState {
   isActive: boolean;
   /** True when the native service stopped because all rounds completed (not user stop). */
   sessionEndedNaturally?: boolean;
+  /** True when the user tapped Stop on the notification. */
+  stoppedByUser?: boolean;
   profileId?: string;
   totalRounds?: number;
   currentRound?: number;
@@ -45,6 +47,22 @@ export interface PomodoroServicePlugin {
   getSessionState(): Promise<PomodoroSessionState>;
 
   clearPendingLog(): Promise<void>;
+
+  cancelPhaseCompleteNotification(options: { roundNumber: number }): Promise<void>;
+
+  /** Start the scheduler foreground service (Android). Shows "Session starting at HH:MM" and starts the session at that time. */
+  startSchedulerService(options: {
+    hour: number;
+    minute: number;
+    workDurationMin: number;
+    breakDurationMin: number;
+    totalRounds: number;
+    profileId: string;
+    activityTag?: string;
+  }): Promise<void>;
+
+  /** Stop the scheduler service (Android). */
+  stopSchedulerService(): Promise<void>;
 }
 
 const PomodoroService = registerPlugin<PomodoroServicePlugin>('PomodoroService', {
@@ -55,6 +73,9 @@ const PomodoroService = registerPlugin<PomodoroServicePlugin>('PomodoroService',
       return { isActive: false };
     },
     async clearPendingLog() {},
+    async cancelPhaseCompleteNotification() {},
+    async startSchedulerService() {},
+    async stopSchedulerService() {},
   }),
 });
 

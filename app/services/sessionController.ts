@@ -51,14 +51,12 @@ export class SessionController {
   private listeners: Set<(event: SessionEvent) => void> = new Set();
   private ongoingNotificationInterval: number | null = null;
   private useNativeService: boolean = Capacitor.getPlatform() === 'android';
-  private autoStartIntervalId: number | null = null;
   private lastCompletedWorkPhaseState: SessionState | null = null; // New field to store work phase state for logging
 
 
   constructor() {
     this.setupNotificationListeners();
     this.setupAppListeners();
-    this.startAutoStartCheck();
   }
 
   private setupNotificationListeners() {
@@ -244,6 +242,16 @@ export class SessionController {
           return false;
         }
 
+        // Session may have been started by the scheduler service (app was closed). Sync lastAutoStartDay.
+        if (this.profile.autoStartTime) {
+          const today = new Date().toISOString().split('T')[0];
+          if (this.profile.lastAutoStartDay !== today) {
+            const updatedProfile = { ...this.profile, lastAutoStartDay: today, updatedAt: new Date().toISOString() };
+            await StorageService.updateProfile(updatedProfile);
+            this.profile = updatedProfile;
+          }
+        }
+
         // Preserve session identity: use stored sessionStartTime so logs stay in the same session
         const savedState = await StorageService.getSessionState();
         const phaseDurationSec = nativeState.phaseDurationSec ?? 0;
@@ -379,6 +387,7 @@ export class SessionController {
     await StorageService.clearSessionState();
     this.state = null;
     this.profile = null;
+    this.emit({ type: 'stateChange', state: null });
   }
 
   setActivityTag(tag?: string): void {
@@ -608,20 +617,28 @@ export class SessionController {
   dispose() {
     this.stopTimer();
     this.stopOngoingNotification();
-    this.stopAutoStartCheck();
     this.listeners.clear();
     this.removeNotificationListeners();
     this.removeAppListeners();
   }
 
   private appListener: any = null;
+  private syncIntervalId: ReturnType<typeof setInterval> | null = null;
+  private syncInProgress = false;
 
   private async setupAppListeners() {
     this.appListener = await App.addListener('appStateChange', async (state: { isActive: boolean }) => {
       if (state.isActive) {
+        // Re-schedule auto-start alarm when app comes to foreground (alarm may have been cleared)
+        if (this.useNativeService) {
+          this.startSchedulerServiceIfNeeded().catch(() => {});
+        }
         // App resumed - force immediate update
         if (this.useNativeService) {
           await this.syncWithNative();
+          // Poll native state while in foreground so notification actions (Start/Stop) reflect in UI
+          this.clearSyncInterval();
+          this.syncIntervalId = setInterval(() => this.syncWithNative(), 1000);
         } else if (this.state && this.state.isActive) {
           // Web wall-clock catch-up
           const now = Date.now();
@@ -643,6 +660,7 @@ export class SessionController {
       } else {
         // App backgrounded - STOP JS logic to avoid conflicts with native service
         console.log('App backgrounded - stopping JS timers');
+        this.clearSyncInterval();
         this.stopTimer();
         this.stopOngoingNotification();
         if (this.state) {
@@ -670,7 +688,8 @@ export class SessionController {
 
   private async syncWithNative() {
     if (!this.useNativeService) return;
-
+    if (this.syncInProgress) return;
+    this.syncInProgress = true;
     try {
       const nativeState = await PomodoroService.getSessionState();
       console.log('Syncing with native state:', nativeState);
@@ -682,10 +701,11 @@ export class SessionController {
         const elapsedTime = Math.max(0, phaseDurationSec - timeRemainingSec);
         const phaseEndTimeMillis = nativeState.phaseEndTimeMillis ?? Date.now();
         const startTime = phaseEndTimeMillis - phaseDurationSec * 1000;
+        const profileId = nativeState.profileId || this.state?.profileId || '';
 
         this.state = {
           ...this.state,
-          profileId: nativeState.profileId || this.state?.profileId || '',
+          profileId,
           currentRound: nativeState.currentRound ?? 1,
           totalRounds: nativeState.totalRounds ?? this.state?.totalRounds ?? 0,
           isWorkPhase: nativeState.isWorkPhase ?? true,
@@ -696,6 +716,10 @@ export class SessionController {
           isActive: true,
           currentActivityTag: nativeState.activityTag || this.state?.currentActivityTag,
         };
+
+        // Keep controller profile in sync so UI shows the correct profile (e.g. after "Start now" from notification)
+        const profiles = await StorageService.getProfiles();
+        this.profile = profiles.find(p => p.id === profileId) || this.profile;
 
         // Resume JS UI updates
         this.startTimer();
@@ -708,6 +732,12 @@ export class SessionController {
         // Native completed all rounds while app was in background. End session on JS;
         // do NOT restart native or we would effectively "start a new session" from stale state.
         await this.processPendingLogsFromNative(nativeState);
+        if (this.state) {
+          this.emit({ type: 'sessionEnd', state: this.state });
+        }
+        await this.stopSession();
+      } else if (nativeState.stoppedByUser) {
+        // User tapped Stop on the notification – end session on JS, don't restart native.
         if (this.state) {
           this.emit({ type: 'sessionEnd', state: this.state });
         }
@@ -741,10 +771,37 @@ export class SessionController {
       }
     } catch (e) {
       console.error('Error syncing with native service:', e);
+    } finally {
+      this.syncInProgress = false;
+    }
+  }
+
+  private clearSyncInterval() {
+    if (this.syncIntervalId != null) {
+      clearInterval(this.syncIntervalId);
+      this.syncIntervalId = null;
+    }
+  }
+
+  /**
+   * Start polling native state when app is in foreground (Android). Call from UI init so the
+   * screen updates when the user taps Start/Stop on the notification without leaving the app.
+   */
+  async ensureForegroundPolling(): Promise<void> {
+    if (!this.useNativeService || this.syncIntervalId != null) return;
+    try {
+      const state = await App.getState();
+      if (state.isActive) {
+        await this.syncWithNative();
+        this.syncIntervalId = setInterval(() => this.syncWithNative(), 1000);
+      }
+    } catch {
+      // ignore
     }
   }
 
   private removeAppListeners() {
+    this.clearSyncInterval();
     if (this.appListener) {
       this.appListener.remove();
       this.appListener = null;
@@ -938,60 +995,40 @@ export class SessionController {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
 
-  private startAutoStartCheck() {
-    if (this.autoStartIntervalId) return;
+  /**
+   * Start or stop the Android scheduler foreground service based on the currently selected profile.
+   * When the active profile has autoStartTime, starts the service (shows "Session starting at HH:MM").
+   * Otherwise stops it.
+   */
+  async startSchedulerServiceIfNeeded(): Promise<void> {
+    if (!this.useNativeService) return;
 
-    // Check every minute
-    this.autoStartIntervalId = window.setInterval(() => {
-      this.checkAutoStart();
-    }, 60000);
-
-    // Also check immediately
-    this.checkAutoStart();
-  }
-
-  private stopAutoStartCheck() {
-    if (this.autoStartIntervalId) {
-      clearInterval(this.autoStartIntervalId);
-      this.autoStartIntervalId = null;
-    }
-  }
-
-  private async checkAutoStart() {
-    // If a session is already active, don't auto-start another one
-    if (this.state && this.state.isActive) return;
-
-    const profiles = await StorageService.getProfiles();
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeMinutes = currentHour * 60 + currentMinute;
-
-    for (const profile of profiles) {
-      if (profile.autoStartTime) {
-        const [hourStr, minStr] = profile.autoStartTime.split(':');
-        const autoHour = parseInt(hourStr || '0', 10);
-        const autoMin = parseInt(minStr || '0', 10);
-        const autoTimeMinutes = autoHour * 60 + autoMin;
-
-        // If current time is >= auto start time AND it hasn't started today
-        if (currentTimeMinutes >= autoTimeMinutes && profile.lastAutoStartDay !== today) {
-          console.log(`Auto-starting profile: ${profile.name}`);
-
-          // Update profile to mark it as started today
-          const updatedProfile = {
-            ...profile,
-            lastAutoStartDay: today,
-            updatedAt: new Date().toISOString()
-          };
-          await StorageService.updateProfile(updatedProfile);
-
-          // Start the session
-          await this.startSession(updatedProfile);
-          break; // Only start one profile
-        }
+    const profile = await StorageService.getActiveProfile();
+    if (!profile.autoStartTime) {
+      try {
+        await PomodoroService.stopSchedulerService();
+      } catch (e) {
+        console.warn('Failed to stop scheduler service:', e);
       }
+      return;
+    }
+
+    const [hourStr, minStr] = profile.autoStartTime.split(':');
+    const hour = parseInt(hourStr || '0', 10);
+    const minute = parseInt(minStr || '0', 10);
+
+    try {
+      await PomodoroService.startSchedulerService({
+        hour,
+        minute,
+        workDurationMin: profile.workDuration / 60,
+        breakDurationMin: profile.breakDuration / 60,
+        totalRounds: profile.rounds,
+        profileId: profile.id,
+        activityTag: undefined,
+      });
+    } catch (e) {
+      console.warn('Failed to start scheduler service:', e);
     }
   }
 }

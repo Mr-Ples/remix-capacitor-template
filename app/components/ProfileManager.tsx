@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Profile, Question } from '../types/pomodoro';
 import { StorageService } from '../services/storage';
+import { SessionController } from '../services/sessionController';
 import { DurationPicker } from './DurationPicker';
 
 const TAG_COLORS = ['#f87171', '#fb923c', '#fbbf24', '#4ade80', '#22d3ee', '#818cf8', '#c084fc', '#f472b6'];
@@ -41,6 +42,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     if (profile) {
       await StorageService.setActiveProfileId(profileId);
       onProfileChange(profile);
+      await SessionController.getInstance().startSchedulerServiceIfNeeded();
     }
   };
 
@@ -123,6 +125,9 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
 
     await loadProfiles();
 
+    // Start or stop the scheduler service when any profile is saved (e.g. auto-start time changed)
+    await SessionController.getInstance().startSchedulerServiceIfNeeded();
+
     if (existingIndex === -1) {
       await StorageService.setActiveProfileId(updatedProfile.id);
       onProfileChange(updatedProfile);
@@ -141,6 +146,8 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
     if (profiles.length <= 1) return;
     await StorageService.deleteProfile(profileId);
     await loadProfiles();
+
+    await SessionController.getInstance().startSchedulerServiceIfNeeded();
 
     if (currentProfile.id === profileId) {
       const remaining = profiles.filter(p => p.id !== profileId);
