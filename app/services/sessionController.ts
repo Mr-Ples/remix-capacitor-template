@@ -403,6 +403,47 @@ export class SessionController {
     }
   }
 
+  /**
+   * Turn the upcoming (or current) break into work time for this round.
+   * - During work: adds break duration to current phase and skips break when phase ends.
+   * - During break: ends break now and starts work with (full work + remaining break time).
+   */
+  async convertBreakToWork(): Promise<void> {
+    if (!this.state || !this.profile || !this.state.isActive || this.profile.breakDuration === 0) return;
+
+    if (this.state.isWorkPhase) {
+      // Add break duration to current work phase and skip break when this phase ends
+      this.state.phaseDuration += this.profile.breakDuration;
+      this.state.skipBreakThisRound = true;
+    } else {
+      // Currently on break: switch to work with full work duration + remaining break time
+      const remainingBreakSec = Math.max(0, this.state.phaseDuration - this.state.elapsedTime);
+      this.state.isWorkPhase = true;
+      this.state.phaseDuration = this.profile.workDuration + remainingBreakSec;
+      this.state.elapsedTime = 0;
+      this.state.startTime = Date.now();
+      this.state.skipBreakThisRound = true;
+    }
+
+    await StorageService.saveSessionState(this.state);
+
+    if (this.useNativeService) {
+      await PomodoroService.startSession({
+        workDurationMin: this.profile.workDuration / 60,
+        breakDurationMin: this.profile.breakDuration / 60,
+        totalRounds: this.state.totalRounds,
+        profileId: this.profile.id,
+        currentRound: this.state.currentRound,
+        isWorkPhase: this.state.isWorkPhase,
+        phaseStartTimeMillis: this.state.startTime,
+        phaseDurationSec: this.state.phaseDuration,
+        activityTag: this.state.currentActivityTag,
+      }).catch(() => {});
+    }
+
+    this.emit({ type: 'stateChange', state: this.state });
+  }
+
   async suspendRound(): Promise<void> {
     if (this.state && this.state.isActive && this.state.isWorkPhase && this.state.currentActivityTag) {
       const remaining = this.getTimeRemaining();
@@ -799,8 +840,13 @@ export class SessionController {
         // Work phase ended
         this.lastCompletedWorkPhaseState = { ...this.state }; // Capture current state for logging later
 
-        if (this.profile.breakDuration === 0) {
-          // No break: Round is complete, log the work phase immediately
+        const skipBreak = this.state.skipBreakThisRound === true;
+        if (skipBreak) {
+          this.state.skipBreakThisRound = false;
+        }
+
+        if (this.profile.breakDuration === 0 || skipBreak) {
+          // No break (or user chose to skip break): Round is complete, log the work phase immediately
           shouldEmitPhaseEndForLogging = true;
           stateToEmitForLogging = this.lastCompletedWorkPhaseState;
 
@@ -815,6 +861,20 @@ export class SessionController {
             this.state.phaseDuration = this.profile.workDuration; // Now in seconds
             this.state.elapsedTime = 0;
             this.state.startTime = Date.now();
+            // Keep native service in sync when we skipped break (JS transitioned to next round; native would have gone to break)
+            if (skipBreak && this.useNativeService && this.profile) {
+              await PomodoroService.startSession({
+                workDurationMin: this.profile.workDuration / 60,
+                breakDurationMin: this.profile.breakDuration / 60,
+                totalRounds: this.state.totalRounds,
+                profileId: this.profile.id,
+                currentRound: this.state.currentRound,
+                isWorkPhase: this.state.isWorkPhase,
+                phaseStartTimeMillis: this.state.startTime,
+                phaseDurationSec: this.state.phaseDuration,
+                activityTag: this.state.currentActivityTag,
+              }).catch(() => {});
+            }
           }
         } else {
           // Break phase starts

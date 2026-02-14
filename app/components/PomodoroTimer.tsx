@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { FilePen, MoreVertical } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import type { Profile, SessionState, SessionLog, SuspendedRound } from '../types/pomodoro';
 import { SessionController, type PendingLogToShow } from '../services/sessionController';
@@ -7,6 +8,7 @@ import { StorageService } from '../services/storage';
 import { LoggingModal } from './LoggingModal';
 import { ProfileManager } from './ProfileManager';
 import { LogsView } from './LogsView';
+import { ActivityNotesModal } from './ActivityNotesModal';
 
 export function PomodoroTimer() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -14,6 +16,7 @@ export function PomodoroTimer() {
   const [timeRemaining, setTimeRemaining] = useState<number>(0);
   const [showLoggingModal, setShowLoggingModal] = useState(false);
   const [showLogsView, setShowLogsView] = useState(false);
+  const [showActivityNotesModal, setShowActivityNotesModal] = useState(false);
   const [loggingPhaseType, setLoggingPhaseType] = useState<'work' | 'break'>('work');
   const [loggingRoundNumber, setLoggingRoundNumber] = useState<number>(1);
   const [selectedActivityTag, setSelectedActivityTag] = useState<string>('');
@@ -29,6 +32,10 @@ export function PomodoroTimer() {
   const [completedPhaseState, setCompletedPhaseState] = useState<SessionState | null>(null);
   /** Queue of background-completed rounds to show in the logging modal one after another. */
   const [pendingLogsModalQueue, setPendingLogsModalQueue] = useState<PendingLogToShow[]>([]);
+
+  // Session actions menu (triple-dot popover)
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const sessionMenuRef = useRef<HTMLDivElement>(null);
 
   // Touch gesture state for swipe navigation
   const [touchStartX, setTouchStartX] = useState<number>(0);
@@ -193,6 +200,17 @@ export function PomodoroTimer() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!sessionMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sessionMenuRef.current && !sessionMenuRef.current.contains(e.target as Node)) {
+        setSessionMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [sessionMenuOpen]);
+
   const loadSessionLogs = async () => {
     const logs = await StorageService.getSessionLogs();
     setSessionLogs(logs);
@@ -236,6 +254,16 @@ export function PomodoroTimer() {
   const handlePauseSession = () => {
     if (!controllerRef.current) return;
     controllerRef.current.pauseSession();
+  };
+
+  const handleConvertBreakToWork = async () => {
+    if (!controllerRef.current || !sessionState) return;
+    const message = sessionState.isWorkPhase
+      ? 'Add the break time to this work phase? The break for this round will be skipped and the timer will extend by the break duration.'
+      : 'End this break and switch to work? The remaining break time will be added to the work phase for this round.';
+    if (!window.confirm(message)) return;
+    await controllerRef.current.convertBreakToWork();
+    setTimeRemaining(controllerRef.current.getTimeRemaining());
   };
 
   const handleStopSession = async () => {
@@ -557,29 +585,28 @@ export function PomodoroTimer() {
                 <span className="text-sm font-medium text-mutedForeground tracking-widest uppercase">
                   {sessionState.isWorkPhase ? 'Work' : 'Break'}
                 </span>
+                <p className="text-sm text-mutedForeground">
+                  Round <span className="text-foreground font-medium">{sessionState.currentRound}</span> of <span className="text-foreground font-medium">{sessionState.totalRounds}</span>
+                </p>
               </div>
-            </div>
-
-            <div className="text-center space-y-1">
-              <p className="text-sm text-mutedForeground">
-                Round <span className="text-foreground font-medium">{sessionState.currentRound}</span> of <span className="text-foreground font-medium">{sessionState.totalRounds}</span>
-              </p>
             </div>
 
             {profile.activityTags && profile.activityTags.length > 0 && (
               <div className="w-full max-w-xs transition-all">
-                <select
-                  className="input-field w-full appearance-none text-center cursor-pointer"
-                  value={sessionState.currentActivityTag || ''}
-                  onChange={(e) => handleActivityTagChange(e.target.value)}
-                >
-                  <option value="">No Activity Selected</option>
-                  {profile.activityTags.map((tag) => (
-                    <option key={tag} value={tag}>
-                      {tag}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2 w-full">
+                  <select
+                    className="input-field flex-1 appearance-none text-center cursor-pointer"
+                    value={sessionState.currentActivityTag || ''}
+                    onChange={(e) => handleActivityTagChange(e.target.value)}
+                  >
+                    <option value="">No Activity Selected</option>
+                    {profile.activityTags.map((tag) => (
+                      <option key={tag} value={tag}>
+                        {tag}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="mt-4">
                   {renderGoalProgress(sessionState.currentActivityTag)}
                 </div>
@@ -598,7 +625,7 @@ export function PomodoroTimer() {
             )}
 
             {!profile.useEndTime && (
-              <div className="flex gap-4 w-full pt-4">
+              <div className="flex gap-4 w-full pt-4 items-stretch">
                 {sessionState.isActive ? (
                   <button className="btn-primary flex-1" onClick={handlePauseSession}>
                     Pause
@@ -614,17 +641,81 @@ export function PomodoroTimer() {
                 >
                   Stop
                 </button>
+                <div className="relative shrink-0 flex" ref={sessionMenuRef}>
+                  <button
+                    type="button"
+                    className="btn-secondary h-full px-4 rounded-lg flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); setSessionMenuOpen((o) => !o); }}
+                    title="More actions"
+                    aria-label="More actions"
+                    aria-expanded={sessionMenuOpen}
+                  >
+                    <MoreVertical size={20} strokeWidth={2} aria-hidden />
+                  </button>
+                  {sessionMenuOpen && (
+                    <div className="absolute right-0 top-full z-10 mt-1 min-w-[10rem] rounded-lg border border-white/10 bg-background/95 py-1 shadow-lg backdrop-blur">
+                      <button
+                        type="button"
+                        className="w-full px-4 py-2 text-left text-sm text-mutedForeground hover:bg-white/5 hover:text-foreground"
+                        onClick={() => { setShowActivityNotesModal(true); setSessionMenuOpen(false); }}
+                      >
+                        Notes & tasks
+                      </button>
+                      {profile.breakDuration > 0 && sessionState?.isActive && !sessionState.skipBreakThisRound && (
+                        <button
+                          type="button"
+                          className="w-full px-4 py-2 text-left text-sm text-mutedForeground hover:bg-white/5 hover:text-foreground"
+                          onClick={() => { handleConvertBreakToWork(); setSessionMenuOpen(false); }}
+                        >
+                          Remove Break
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
             {profile.useEndTime && (
-              <div className="w-full pt-4">
+              <div className="flex gap-2 w-full pt-4 items-stretch">
                 <button
-                  className="btn-secondary w-full"
+                  className="btn-secondary flex-1"
                   onClick={handleStopSession}
                 >
                   Stop Session
                 </button>
+                <div className="relative shrink-0 flex" ref={sessionMenuRef}>
+                  <button
+                    type="button"
+                    className="btn-secondary h-full px-4 rounded-lg flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); setSessionMenuOpen((o) => !o); }}
+                    title="More actions"
+                    aria-label="More actions"
+                    aria-expanded={sessionMenuOpen}
+                  >
+                    <MoreVertical size={20} strokeWidth={2} aria-hidden />
+                  </button>
+                  {sessionMenuOpen && (
+                    <div className="absolute right-0 top-full z-10 mt-1 min-w-[10rem] rounded-lg border border-white/10 bg-background/95 py-1 shadow-lg backdrop-blur">
+                      <button
+                        type="button"
+                        className="w-full px-4 py-2 text-left text-sm text-mutedForeground hover:bg-white/5 hover:text-foreground"
+                        onClick={() => { setShowActivityNotesModal(true); setSessionMenuOpen(false); }}
+                      >
+                        Notes & tasks
+                      </button>
+                      {profile.breakDuration > 0 && sessionState?.isActive && !sessionState.skipBreakThisRound && (
+                        <button
+                          type="button"
+                          className="w-full px-4 py-2 text-left text-sm text-mutedForeground hover:bg-white/5 hover:text-foreground"
+                          onClick={() => { handleConvertBreakToWork(); setSessionMenuOpen(false); }}
+                        >
+                          Remove Break
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -655,18 +746,29 @@ export function PomodoroTimer() {
             {profile.activityTags && profile.activityTags.length > 0 && (
               <div className="w-full max-w-xs space-y-2">
                 <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Activity</label>
-                <select
-                  className="input-field w-full appearance-none cursor-pointer"
-                  value={selectedActivityTag}
-                  onChange={(e) => setSelectedActivityTag(e.target.value)}
-                >
-                  <option value="">None</option>
-                  {profile.activityTags.map((tag) => (
-                    <option key={tag} value={tag}>
-                      {tag}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2 w-full">
+                  <select
+                    className="input-field flex-1 appearance-none cursor-pointer"
+                    value={selectedActivityTag}
+                    onChange={(e) => setSelectedActivityTag(e.target.value)}
+                  >
+                    <option value="">None</option>
+                    {profile.activityTags.map((tag) => (
+                      <option key={tag} value={tag}>
+                        {tag}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-secondary p-3 rounded-lg shrink-0"
+                    onClick={() => setShowActivityNotesModal(true)}
+                    title="Notes & tasks"
+                    aria-label="Notes & tasks"
+                  >
+                    <FilePen size={20} strokeWidth={2} aria-hidden />
+                  </button>
+                </div>
                 <div className="pt-2">
                   {renderGoalProgress(selectedActivityTag)}
                 </div>
@@ -682,6 +784,17 @@ export function PomodoroTimer() {
                   </button>
                 )}
               </div>
+            )}
+            {(!profile.activityTags || profile.activityTags.length === 0) && (
+              <button
+                type="button"
+                className="btn-secondary p-3 rounded-lg"
+                onClick={() => setShowActivityNotesModal(true)}
+                title="Notes & tasks"
+                aria-label="Notes & tasks"
+              >
+                <FilePen size={20} strokeWidth={2} aria-hidden />
+              </button>
             )}
 
             <button className="btn-primary w-full max-w-xs text-lg" onClick={handleStartSession}>
@@ -883,6 +996,16 @@ export function PomodoroTimer() {
         onDataChange={loadSessionLogs}
         defaultProfileId={profile?.id}
       />
+
+      {profile && (
+        <ActivityNotesModal
+          isOpen={showActivityNotesModal}
+          onClose={() => setShowActivityNotesModal(false)}
+          profileId={profile.id}
+          activityTag={sessionState?.currentActivityTag ?? selectedActivityTag ?? 'Uncategorized'}
+          tagColor={profile.tagColors?.[sessionState?.currentActivityTag ?? selectedActivityTag ?? '']}
+        />
+      )}
     </div>
   );
 }

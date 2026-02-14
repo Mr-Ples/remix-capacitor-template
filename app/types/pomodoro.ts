@@ -68,6 +68,8 @@ export interface SessionState {
   isActive: boolean;
   currentActivityTag?: string; // Current activity tag for this round
   timeRemaining?: number; // Optional: used when resuming a suspended round
+  /** When true, this round has no break; work phase goes straight to next round. */
+  skipBreakThisRound?: boolean;
 }
 
 export interface SuspendedRound {
@@ -99,6 +101,18 @@ export interface SessionSummary {
   completedRounds: number;
   totalRounds: number;
   logs: SessionLog[];
+}
+
+/** A note or task attached to an activity (per profile). */
+export interface ActivityItem {
+  id: string;
+  profileId: string;
+  activityTag: string;
+  type: 'note' | 'task';
+  content: string;
+  completed?: boolean; // only for type 'task'
+  createdAt: string;
+  updatedAt: string;
 }
 
 export const DEFAULT_PROFILE: Profile = {

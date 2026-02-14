@@ -516,15 +516,6 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
                       onChange={(e) => updateQuestion(qIndex, 'text', e.target.value)}
                       placeholder="Question text"
                     />
-                    <select
-                      className="input-field w-24 h-10 px-2 text-xs"
-                      value={question.type}
-                      onChange={(e) => updateQuestion(qIndex, 'type', e.target.value)}
-                    >
-                      <option value="work">Work</option>
-                      <option value="break">Break</option>
-                      <option value="both">Both</option>
-                    </select>
                     <button className="text-mutedForeground hover:text-red-400 p-2" onClick={() => deleteQuestion(qIndex)}>×</button>
                   </div>
                   <div className="space-y-2 pl-4 border-l-2 border-white/5">

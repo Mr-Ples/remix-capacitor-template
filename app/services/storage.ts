@@ -1,5 +1,5 @@
 import { Preferences } from '@capacitor/preferences';
-import type { Profile, SessionState, SessionLog, SessionSummary, SuspendedRound } from '../types/pomodoro';
+import type { Profile, SessionState, SessionLog, SessionSummary, SuspendedRound, ActivityItem } from '../types/pomodoro';
 import { DEFAULT_PROFILE } from '../types/pomodoro';
 
 const STORAGE_KEYS = {
@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   SESSION_LOGS: 'pomodoro_session_logs',
   SESSION_SUMMARIES: 'pomodoro_session_summaries',
   SUSPENDED_ROUNDS: 'pomodoro_suspended_rounds',
+  ACTIVITY_ITEMS: 'pomodoro_activity_items',
 };
 
 export class StorageService {
@@ -310,6 +311,69 @@ export class StorageService {
       });
     } catch (error) {
       console.error('Error saving suspended rounds:', error);
+    }
+  }
+
+  // Activity notes & tasks (per profile, per activity tag)
+  static async getActivityItems(profileId: string, activityTag?: string): Promise<ActivityItem[]> {
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEYS.ACTIVITY_ITEMS });
+      if (!value) return [];
+      const all: ActivityItem[] = JSON.parse(value);
+      const filtered = all.filter(
+        (item) => item.profileId === profileId && (activityTag == null || item.activityTag === activityTag)
+      );
+      return filtered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    } catch (error) {
+      console.error('Error getting activity items:', error);
+      return [];
+    }
+  }
+
+  static async addActivityItem(item: Omit<ActivityItem, 'createdAt' | 'updatedAt'>): Promise<ActivityItem> {
+    const now = new Date().toISOString();
+    const full: ActivityItem = {
+      ...item,
+      completed: item.type === 'task' ? (item.completed ?? false) : undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    try {
+      const all = await this.getAllActivityItems();
+      all.push(full);
+      await Preferences.set({ key: STORAGE_KEYS.ACTIVITY_ITEMS, value: JSON.stringify(all) });
+      return full;
+    } catch (error) {
+      console.error('Error adding activity item:', error);
+      throw error;
+    }
+  }
+
+  private static async getAllActivityItems(): Promise<ActivityItem[]> {
+    const { value } = await Preferences.get({ key: STORAGE_KEYS.ACTIVITY_ITEMS });
+    return value ? JSON.parse(value) : [];
+  }
+
+  static async updateActivityItem(updated: ActivityItem): Promise<void> {
+    try {
+      const all = await this.getAllActivityItems();
+      const index = all.findIndex((item) => item.id === updated.id);
+      if (index !== -1) {
+        all[index] = { ...updated, updatedAt: new Date().toISOString() };
+        await Preferences.set({ key: STORAGE_KEYS.ACTIVITY_ITEMS, value: JSON.stringify(all) });
+      }
+    } catch (error) {
+      console.error('Error updating activity item:', error);
+    }
+  }
+
+  static async deleteActivityItem(id: string): Promise<void> {
+    try {
+      const all = await this.getAllActivityItems();
+      const filtered = all.filter((item) => item.id !== id);
+      await Preferences.set({ key: STORAGE_KEYS.ACTIVITY_ITEMS, value: JSON.stringify(filtered) });
+    } catch (error) {
+      console.error('Error deleting activity item:', error);
     }
   }
 }
