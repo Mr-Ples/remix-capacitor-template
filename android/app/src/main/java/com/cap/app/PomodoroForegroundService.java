@@ -250,7 +250,7 @@ public class PomodoroForegroundService extends Service {
     }
 
     /** Scheduler loop: check every 5 seconds if it's time to start (same as "Start now"). */
-    private static final long SCHEDULER_CHECK_MS = 5_000;
+    private static final long SCHEDULER_CHECK_MS = 15_000;
     private static final String TAG = "PomodoroScheduler";
 
     private void startSchedulerLoop() {
