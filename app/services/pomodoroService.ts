@@ -10,6 +10,7 @@ export interface PomodoroSessionState {
   timeRemainingSec?: number;
   phaseDurationSec?: number;
   activityTag?: string;
+  sessionStartTime?: number;
   pendingLog?: {
     roundNumber: number;
     phaseType: string;

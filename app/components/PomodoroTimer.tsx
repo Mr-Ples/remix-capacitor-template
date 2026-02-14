@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Capacitor } from '@capacitor/core';
 import type { Profile, SessionState, SessionLog, SuspendedRound } from '../types/pomodoro';
 import { SessionController } from '../services/sessionController';
@@ -24,12 +24,29 @@ export function PomodoroTimer() {
   const [sessionLogs, setSessionLogs] = useState<SessionLog[]>([]);
   const [suspendedRounds, setSuspendedRounds] = useState<SuspendedRound[]>([]);
 
+  const [completedPhaseState, setCompletedPhaseState] = useState<SessionState | null>(null);
+
   // Touch gesture state for swipe navigation
   const [touchStartX, setTouchStartX] = useState<number>(0);
   const [touchEndX, setTouchEndX] = useState<number>(0);
 
   // Track current session start time (persists even when session stops)
   const [currentSessionStartTime, setCurrentSessionStartTime] = useState<number | null>(null);
+
+  // When no session is ongoing, daily targets use the most recent session for this profile
+  const effectiveSessionStartTime = useMemo(() => {
+    if (sessionState?.isActive && sessionState.sessionStartTime != null) {
+      return sessionState.sessionStartTime;
+    }
+    if (currentSessionStartTime != null) return currentSessionStartTime;
+    if (!profile?.id || sessionLogs.length === 0) return null;
+    const profileLogs = sessionLogs.filter((l) => l.profileId === profile.id);
+    if (profileLogs.length === 0) return null;
+    const latest = profileLogs.reduce((best, log) =>
+      new Date(log.phaseEndTime).getTime() > new Date(best.phaseEndTime).getTime() ? log : best
+    );
+    return new Date(latest.sessionStartTime).getTime();
+  }, [sessionState?.isActive, sessionState?.sessionStartTime, currentSessionStartTime, profile?.id, sessionLogs]);
 
   useEffect(() => {
     const controller = SessionController.getInstance();
@@ -44,16 +61,15 @@ export function PomodoroTimer() {
           setCurrentSessionStartTime(event.state.sessionStartTime);
         }
       } else if (event.type === 'phaseEnd') {
-        // Capture the completed round number before state transitions
-        setLoggingRoundNumber(event.state.currentRound);
-        setLoggingPhaseType(event.state.isWorkPhase ? 'work' : 'break');
+        // Capture the state of the COMPLETED round/phase for the logging modal
+        setCompletedPhaseState(event.state);
 
         // AUTO-SAVE LOG
         const newLogId = Date.now().toString();
         const autoLog: SessionLog = {
           id: newLogId,
           profileId: event.state.profileId,
-          sessionStartTime: new Date(event.state.startTime).toISOString(),
+          sessionStartTime: new Date(event.state.sessionStartTime).toISOString(),
           roundNumber: event.state.currentRound,
           phaseType: event.state.isWorkPhase ? 'work' : 'break',
           phaseEndTime: new Date().toISOString(),
@@ -68,7 +84,9 @@ export function PomodoroTimer() {
         });
 
         setShowLoggingModal(true);
-        setSessionState(event.state);
+        // Do NOT setSessionState(event.state) here. The controller will emit a 'stateChange'
+        // event with the new state, which will update sessionState.
+        // This prevents race conditions and ensures sessionState reflects the *current* phase.
         setTimeRemaining(controller.getTimeRemaining());
       } else if (event.type === 'sessionEnd') {
         alert('Session Complete! Great work!');
@@ -100,17 +118,26 @@ export function PomodoroTimer() {
           try {
             const nativeState = await PomodoroService.getSessionState();
             if (nativeState.pendingLog) {
-              setLoggingRoundNumber(nativeState.pendingLog.roundNumber);
-              setLoggingPhaseType(nativeState.pendingLog.phaseType as 'work' | 'break');
+              // Set completedPhaseState for the pending log
+              setCompletedPhaseState({
+                profileId: nativeState.profileId || resumedProfile?.id || 'unknown',
+                currentRound: nativeState.pendingLog.roundNumber,
+                totalRounds: nativeState.totalRounds ?? 0, // Fallback, should be provided by nativeState
+                isWorkPhase: nativeState.pendingLog.phaseType === 'work',
+                startTime: Date.now(), // Placeholder, not strictly needed for display
+                sessionStartTime: nativeState.sessionStartTime || Date.now(),
+                elapsedTime: 0, // Placeholder
+                phaseDuration: 0, // Placeholder
+                isActive: false, // It's a pending log from a completed phase
+                currentActivityTag: nativeState.activityTag,
+              });
 
               // Check/create log logic (simplified)
-              const existingLogs = await StorageService.getSessionLogs();
-              // This part of logic is a bit duplicated but executed only on resume
               const newLogId = Date.now().toString();
               const autoLog: SessionLog = {
                 id: newLogId,
                 profileId: nativeState.profileId || resumedProfile?.id || 'unknown',
-                sessionStartTime: new Date().toISOString(),
+                sessionStartTime: new Date(nativeState.sessionStartTime || Date.now()).toISOString(),
                 roundNumber: nativeState.pendingLog.roundNumber,
                 phaseType: nativeState.pendingLog.phaseType as 'work' | 'break',
                 phaseEndTime: new Date().toISOString(),
@@ -298,6 +325,18 @@ export function PomodoroTimer() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatDurationCompact = (seconds: number): string => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    } else {
+      return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+  };
+
   const getProgressPercentage = (): number => {
     if (!sessionState) return 0;
     return ((sessionState.phaseDuration - timeRemaining) / sessionState.phaseDuration) * 100;
@@ -308,21 +347,21 @@ export function PomodoroTimer() {
   }
   const getCompletedRoundsForTag = (tag: string | undefined): number => {
     if (!tag) return 0;
-    // Filter by session start time instead of by day
-    if (!currentSessionStartTime) return 0;
+    // Filter by effective session (current when active, else most recent for profile)
+    if (effectiveSessionStartTime == null) return 0;
     return sessionLogs.filter(log => {
       const logTime = new Date(log.phaseEndTime).getTime();
-      return log.profileId === profile.id && log.activityTag === tag && logTime >= currentSessionStartTime;
+      return log.profileId === profile.id && log.activityTag === tag && logTime >= effectiveSessionStartTime;
     }).length;
   };
 
   const getUncategorizedRounds = (): number => {
-    // Filter by session start time instead of by day
-    if (!currentSessionStartTime) return 0;
+    // Filter by effective session (current when active, else most recent for profile)
+    if (effectiveSessionStartTime == null) return 0;
     const allTags = profile.activityTags || [];
     return sessionLogs.filter(log => {
       const logTime = new Date(log.phaseEndTime).getTime();
-      if (log.profileId !== profile.id || logTime < currentSessionStartTime) return false;
+      if (log.profileId !== profile.id || logTime < effectiveSessionStartTime) return false;
       // Strictly "uncategorized" if no tag OR tag is not in the official list
       return !log.activityTag || !allTags.includes(log.activityTag);
     }).length;
@@ -334,18 +373,18 @@ export function PomodoroTimer() {
 
     if (profile.useEndTime && profile.endTime) {
       const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+      const nowSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 
       const [endHourStr, endMinStr] = profile.endTime.split(':');
       const endHour = parseInt(endHourStr || '0', 10);
       const endMinute = parseInt(endMinStr || '0', 10);
-      const endMinutes = endHour * 60 + endMinute;
+      const endSeconds = endHour * 3600 + endMinute * 60;
 
-      const minutesUntilEnd = endMinutes - nowMinutes;
-      const roundLengthMinutes = profile.workDuration + profile.breakDuration;
+      const secondsUntilEnd = endSeconds - nowSeconds;
+      const roundLengthSeconds = profile.workDuration + profile.breakDuration;
 
-      if (minutesUntilEnd > 0 && roundLengthMinutes > 0) {
-        return Math.ceil(minutesUntilEnd / roundLengthMinutes);
+      if (secondsUntilEnd > 0 && roundLengthSeconds > 0) {
+        return Math.ceil(secondsUntilEnd / roundLengthSeconds);
       }
       return 0;
     }
@@ -564,11 +603,11 @@ export function PomodoroTimer() {
             )}
 
             <div className="pt-4 text-xs text-mutedForeground text-center space-y-1 opacity-50">
-              <p>Session: {sessionState.totalRounds * (profile.workDuration + profile.breakDuration)} min</p>
+              <p>Session: {Math.floor(sessionState.totalRounds * (profile.workDuration + profile.breakDuration) / 60)} min</p>
               <p>Remaining: {Math.floor(
                 ((sessionState.totalRounds - sessionState.currentRound) *
                   (profile.workDuration + profile.breakDuration) +
-                  timeRemaining / 60)
+                  timeRemaining) / 60
               )} min</p>
             </div>
           </div>
@@ -578,11 +617,11 @@ export function PomodoroTimer() {
               <h2 className="text-2xl font-medium">Ready to Start?</h2>
               {profile.useEndTime && profile.endTime ? (
                 <p className="text-mutedForeground text-sm max-w-xs">
-                  Running until <span className="text-foreground">{profile.endTime}</span> with {profile.workDuration}/{profile.breakDuration} rounds.
+                  Running until <span className="text-foreground">{profile.endTime}</span> with {formatDurationCompact(profile.workDuration)}/{formatDurationCompact(profile.breakDuration)} rounds.
                 </p>
               ) : (
                 <p className="text-mutedForeground text-sm max-w-xs">
-                  <span className="text-foreground">{profile.rounds}</span> rounds of {profile.workDuration}/{profile.breakDuration} min sessions.
+                  <span className="text-foreground">{profile.rounds}</span> rounds of {formatDurationCompact(profile.workDuration)}/{formatDurationCompact(profile.breakDuration)} sessions.
                 </p>
               )}
             </div>
@@ -732,10 +771,10 @@ export function PomodoroTimer() {
                 <svg className="w-full h-full transform -rotate-90 overflow-visible">
                   <circle cx="96" cy="96" r="80" fill="transparent" stroke="currentColor" strokeWidth="12" className="text-white/5" />
                   {(() => {
-                    // Filter by session start time instead of by day
-                    const todayLogs = currentSessionStartTime
+                    // Filter by effective session (current when active, else most recent for profile)
+                    const todayLogs = effectiveSessionStartTime != null
                       ? sessionLogs
-                        .filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= currentSessionStartTime)
+                        .filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= effectiveSessionStartTime)
                         .sort((a, b) => new Date(a.phaseEndTime).getTime() - new Date(b.phaseEndTime).getTime())
                       : [];
 
@@ -768,8 +807,8 @@ export function PomodoroTimer() {
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-3xl font-bold tabular-nums">
-                    {currentSessionStartTime
-                      ? sessionLogs.filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= currentSessionStartTime).length
+                    {effectiveSessionStartTime != null
+                      ? sessionLogs.filter(log => log.profileId === profile.id && new Date(log.phaseEndTime).getTime() >= effectiveSessionStartTime).length
                       : 0}
                   </span>
                   <span className="text-[10px] uppercase tracking-widest text-mutedForeground">Rounds</span>
@@ -796,20 +835,21 @@ export function PomodoroTimer() {
         </div>
       </div>
 
-      {showLoggingModal && sessionState && (
+      {showLoggingModal && completedPhaseState && profile && (
         <LoggingModal
           isOpen={showLoggingModal}
           onClose={() => {
             setShowLoggingModal(false);
             setCurrentLogId(null);
+            setCompletedPhaseState(null); // Clear completed state when modal closes
           }}
           onSubmit={handleLogSubmit}
           onDelete={handleLogDelete}
           profile={profile}
-          phaseType={loggingPhaseType}
-          roundNumber={loggingRoundNumber}
-          totalRounds={sessionState.totalRounds}
-          currentActivityTag={sessionState.currentActivityTag}
+          phaseType={completedPhaseState.isWorkPhase ? 'work' : 'break'}
+          roundNumber={completedPhaseState.currentRound}
+          totalRounds={completedPhaseState.totalRounds}
+          currentActivityTag={completedPhaseState.currentActivityTag}
         />
       )}
 

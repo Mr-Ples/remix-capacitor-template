@@ -4,8 +4,17 @@ export interface Profile {
   id: string;
   name: string;
   rounds: number;
-  workDuration: number; // in minutes
-  breakDuration: number; // in minutes
+  workDuration: number; // in seconds
+  breakDuration: number; // in seconds
+
+  // UI-specific duration components (derived from/converted to total seconds)
+  workDurationHrs: number;
+  workDurationMins: number;
+  workDurationSecs: number;
+
+  breakDurationHrs: number;
+  breakDurationMins: number;
+  breakDurationSecs: number;
   /**
    * When true, this profile uses a clock end time instead of a fixed
    * number of rounds. The actual number of rounds is calculated when
@@ -96,8 +105,16 @@ export const DEFAULT_PROFILE: Profile = {
   id: 'default',
   name: 'Default',
   rounds: 16,
-  workDuration: 50,
-  breakDuration: 10,
+  workDuration: 50 * 60, // 50 minutes in seconds
+  breakDuration: 10 * 60, // 10 minutes in seconds
+
+  workDurationHrs: 0,
+  workDurationMins: 50,
+  workDurationSecs: 0,
+
+  breakDurationHrs: 0,
+  breakDurationMins: 10,
+  breakDurationSecs: 0,
   activityTags: ['Coding', 'Reading', 'Writing', 'Meeting', 'Planning'],
   questions: [
     {

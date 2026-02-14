@@ -12,12 +12,62 @@ const STORAGE_KEYS = {
 };
 
 export class StorageService {
+  // Helper function to migrate old profiles from minutes to seconds (one-time, for pre-refactor data only)
+  private static migrateProfileToSeconds(profile: Profile): Profile {
+    // Only migrate if this profile was saved BEFORE we added HMS fields (old format = durations in minutes).
+    // New saves always include workDurationHrs/Mins/Secs, so undefined means "never written" = old profile.
+    const hasHmsFields =
+      typeof profile.workDurationHrs === 'number' &&
+      typeof profile.workDurationMins === 'number' &&
+      typeof profile.workDurationSecs === 'number';
+    if (hasHmsFields) {
+      return profile; // Already in new format, do not touch
+    }
+
+    const workDurationInSeconds = profile.workDuration * 60;
+    const breakDurationInSeconds = profile.breakDuration * 60;
+
+    const workHms = this.secondsToHms(workDurationInSeconds);
+    const breakHms = this.secondsToHms(breakDurationInSeconds);
+
+    return {
+      ...profile,
+      workDuration: workDurationInSeconds,
+      breakDuration: breakDurationInSeconds,
+      workDurationHrs: workHms.hours,
+      workDurationMins: workHms.minutes,
+      workDurationSecs: workHms.seconds,
+      breakDurationHrs: breakHms.hours,
+      breakDurationMins: breakHms.minutes,
+      breakDurationSecs: breakHms.seconds,
+    };
+  }
+  
+  private static secondsToHms(totalSeconds: number) {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return { hours, minutes, seconds };
+  }
+
   // Profile Management
   static async getProfiles(): Promise<Profile[]> {
     try {
       const { value } = await Preferences.get({ key: STORAGE_KEYS.PROFILES });
       if (value) {
-        return JSON.parse(value);
+        const profiles = JSON.parse(value);
+        // Migrate profiles if needed
+        const migratedProfiles = profiles.map((p: Profile) => this.migrateProfileToSeconds(p));
+        
+        // Save migrated profiles back if any were changed
+        const needsSave = profiles.some((p: Profile, i: number) => 
+          p.workDuration !== migratedProfiles[i].workDuration
+        );
+        if (needsSave) {
+          await this.saveProfiles(migratedProfiles);
+        }
+        
+        return migratedProfiles;
       }
       // Initialize with default profile
       const defaultProfiles = [DEFAULT_PROFILE];

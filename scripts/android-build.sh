@@ -5,4 +5,4 @@ npx cap add android
 npx @capacitor/assets generate
 npm run build
 npx cap sync
-npx cap run android
+npx cap run android --target dbf9c54c

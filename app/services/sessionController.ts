@@ -29,6 +29,8 @@ export class SessionController {
   private ongoingNotificationInterval: number | null = null;
   private useNativeService: boolean = Capacitor.getPlatform() === 'android';
   private autoStartIntervalId: number | null = null;
+  private lastCompletedWorkPhaseState: SessionState | null = null; // New field to store work phase state for logging
+
 
   constructor() {
     this.setupNotificationListeners();
@@ -59,11 +61,12 @@ export class SessionController {
   }
 
   private emit(event: SessionEvent) {
-    // Always emit a shallow clone of the state to ensure React detects the change
-    const stateClone = this.state ? { ...this.state } : null;
+    // Use the state from the event when provided (e.g. phaseEnd sends completed round state);
+    // otherwise clone this.state so React detects the change.
+    const stateToSend = event.state ? { ...event.state } : (this.state ? { ...this.state } : null);
     this.listeners.forEach(listener => listener({
       ...event,
-      state: stateClone as SessionState
+      state: stateToSend as SessionState
     }));
   }
 
@@ -74,13 +77,13 @@ export class SessionController {
     const nowMinutes =
       now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
 
-    const workMinutes = profile.workDuration;
-    const breakMinutes = profile.breakDuration;
-    const roundLengthMinutes = workMinutes + breakMinutes;
+    const workDurationSec = profile.workDuration;
+    const breakDurationSec = profile.breakDuration;
+    const roundLengthSec = workDurationSec + breakDurationSec;
 
     let totalRounds = profile.rounds;
     let isWorkPhase = true;
-    let phaseDurationSec = workMinutes * 60;
+    let phaseDurationSec = workDurationSec;
     let phaseStartTimeMillis = Date.now();
     let elapsedTimeSec = 0;
 
@@ -91,63 +94,63 @@ export class SessionController {
     if (
       profile.useEndTime &&
       profile.endTime &&
-      roundLengthMinutes > 0
+      roundLengthSec > 0
     ) {
       const [endHourStr, endMinStr] = profile.endTime.split(':');
       const endHour = parseInt(endHourStr || '0', 10);
       const endMinute = parseInt(endMinStr || '0', 10);
-      const endMinutes = endHour * 60 + endMinute;
+      const endMinutes = endHour * 60 + endMinute; // End time is still in minutes from midnight
 
-      const minutesUntilEnd = endMinutes - nowMinutes;
+      const minutesUntilEnd = endMinutes - nowMinutes; // Remaining time until end in minutes
 
       if (minutesUntilEnd > 0) {
-        const rawRounds = minutesUntilEnd / roundLengthMinutes;
+        const rawRounds = (minutesUntilEnd * 60) / roundLengthSec; // Convert minutesUntilEnd to seconds for calculation
         const computedRounds = Math.ceil(rawRounds);
 
         if (computedRounds >= 1) {
           totalRounds = computedRounds;
 
-          // Total remaining time in the first (possibly shortened) round
-          const remainingFirstRoundMinutes =
-            minutesUntilEnd - (computedRounds - 1) * roundLengthMinutes;
+          // Total remaining time in the first (possibly shortened) round in seconds
+          const remainingFirstRoundSec =
+            (minutesUntilEnd * 60) - (computedRounds - 1) * roundLengthSec;
 
-          // Offset into the conceptual round where we are starting
-          const offsetWithinRoundMinutes =
-            roundLengthMinutes - remainingFirstRoundMinutes;
+          // Offset into the conceptual round where we are starting in seconds
+          const offsetWithinRoundSec =
+            roundLengthSec - remainingFirstRoundSec;
 
           // Determine current phase and how far into it we are
-          if (offsetWithinRoundMinutes < workMinutes && workMinutes > 0) {
+          if (offsetWithinRoundSec < workDurationSec && workDurationSec > 0) {
             // In work phase
             isWorkPhase = true;
-            const offsetWithinWorkMinutes = Math.max(
+            const offsetWithinWorkSec = Math.max(
               0,
-              Math.min(offsetWithinRoundMinutes, workMinutes)
+              Math.min(offsetWithinRoundSec, workDurationSec)
             );
             // For a shortened first phase, calculate the actual remaining time
-            const remainingWorkMinutes = workMinutes - offsetWithinWorkMinutes;
-            phaseDurationSec = Math.round(remainingWorkMinutes * 60);
+            const remainingWorkSec = workDurationSec - offsetWithinWorkSec;
+            phaseDurationSec = Math.round(remainingWorkSec);
             elapsedTimeSec = 0;  // Start from 0 since we're setting duration to remaining time
             phaseStartTimeMillis = Date.now();
-          } else if (breakMinutes > 0) {
+          } else if (breakDurationSec > 0) {
             // In break phase
             isWorkPhase = false;
-            const offsetWithinBreakMinutes = Math.max(
+            const offsetWithinBreakSec = Math.max(
               0,
               Math.min(
-                offsetWithinRoundMinutes - workMinutes,
-                breakMinutes
+                offsetWithinRoundSec - workDurationSec,
+                breakDurationSec
               )
             );
             // For a shortened first phase, calculate the actual remaining time
-            const remainingBreakMinutes = breakMinutes - offsetWithinBreakMinutes;
-            phaseDurationSec = Math.round(remainingBreakMinutes * 60);
+            const remainingBreakSec = breakDurationSec - offsetWithinBreakSec;
+            phaseDurationSec = Math.round(remainingBreakSec);
             elapsedTimeSec = 0;  // Start from 0 since we're setting duration to remaining time
             phaseStartTimeMillis = Date.now();
           } else {
             // Edge case: work is 0 or we're past both phases somehow
             // Default to work phase with no time elapsed
             isWorkPhase = true;
-            phaseDurationSec = workMinutes * 60;
+            phaseDurationSec = workDurationSec;
             elapsedTimeSec = 0;
             phaseStartTimeMillis = Date.now();
           }
@@ -176,8 +179,8 @@ export class SessionController {
     // countdown keeps running even if the JS runtime is killed.
     if (this.useNativeService) {
       await PomodoroService.startSession({
-        workDurationMin: profile.workDuration,
-        breakDurationMin: profile.breakDuration,
+        workDurationMin: profile.workDuration / 60, // Convert to minutes for native service
+        breakDurationMin: profile.breakDuration / 60, // Convert to minutes for native service
         totalRounds,
         profileId: profile.id,
         currentRound: this.state.currentRound,
@@ -218,6 +221,8 @@ export class SessionController {
           return false;
         }
 
+        // Preserve session identity: use stored sessionStartTime so logs stay in the same session
+        const savedState = await StorageService.getSessionState();
         const phaseDurationSec = nativeState.phaseDurationSec ?? 0;
         const timeRemainingSec = nativeState.timeRemainingSec ?? 0;
         const elapsedTime = Math.max(0, phaseDurationSec - timeRemainingSec);
@@ -230,7 +235,7 @@ export class SessionController {
           totalRounds: nativeState.totalRounds ?? this.profile.rounds,
           isWorkPhase: nativeState.isWorkPhase ?? true,
           startTime,
-          sessionStartTime: startTime, // Use phase start time as session start for resumed sessions
+          sessionStartTime: savedState?.sessionStartTime ?? nativeState.sessionStartTime ?? startTime,
           elapsedTime,
           phaseDuration: phaseDurationSec,
           isActive: true,
@@ -270,6 +275,20 @@ export class SessionController {
     };
 
     await NotificationService.initialize();
+    // On Android, restart the native service so the session continues (notification + timer)
+    if (this.useNativeService && this.profile) {
+      await PomodoroService.startSession({
+        workDurationMin: this.profile.workDuration / 60,
+        breakDurationMin: this.profile.breakDuration / 60,
+        totalRounds: this.state.totalRounds,
+        profileId: this.profile.id,
+        currentRound: this.state.currentRound,
+        isWorkPhase: this.state.isWorkPhase,
+        phaseStartTimeMillis: this.state.startTime,
+        phaseDurationSec: this.state.phaseDuration,
+        activityTag: this.state.currentActivityTag,
+      }).catch(() => {});
+    }
     this.startTimer();
     this.startOngoingNotification();
     this.emit({ type: 'stateChange', state: this.state });
@@ -306,8 +325,8 @@ export class SessionController {
       // Restart native foreground service on Android
       if (this.useNativeService) {
         await PomodoroService.startSession({
-          workDurationMin: this.profile.workDuration,
-          breakDurationMin: this.profile.breakDuration,
+          workDurationMin: this.profile.workDuration / 60,
+          breakDurationMin: this.profile.breakDuration / 60,
           totalRounds: this.state.totalRounds,
           profileId: this.profile.id,
           currentRound: this.state.currentRound,
@@ -345,8 +364,8 @@ export class SessionController {
       // Update the native service with the new tag
       if (this.useNativeService && this.profile) {
         PomodoroService.startSession({
-          workDurationMin: this.profile.workDuration,
-          breakDurationMin: this.profile.breakDuration,
+          workDurationMin: this.profile.workDuration / 60,
+          breakDurationMin: this.profile.breakDuration / 60,
           totalRounds: this.state.totalRounds,
           profileId: this.profile.id,
           currentRound: this.state.currentRound,
@@ -378,7 +397,7 @@ export class SessionController {
       this.state.elapsedTime = 0;
       this.state.startTime = Date.now();
       if (this.profile) {
-        this.state.phaseDuration = this.profile.workDuration * 60;
+        this.state.phaseDuration = this.profile.workDuration; // Now in seconds
       }
 
       await StorageService.saveSessionState(this.state);
@@ -398,8 +417,8 @@ export class SessionController {
 
     if (this.useNativeService) {
       await PomodoroService.startSession({
-        workDurationMin: this.profile.workDuration,
-        breakDurationMin: this.profile.breakDuration,
+        workDurationMin: this.profile.workDuration / 60,
+        breakDurationMin: this.profile.breakDuration / 60,
         totalRounds: this.state.totalRounds,
         profileId: this.profile.id,
         currentRound: this.state.currentRound,
@@ -427,8 +446,8 @@ export class SessionController {
 
       if (this.useNativeService) {
         await PomodoroService.startSession({
-          workDurationMin: this.profile.workDuration,
-          breakDurationMin: this.profile.breakDuration,
+          workDurationMin: this.profile.workDuration / 60,
+          breakDurationMin: this.profile.breakDuration / 60,
           totalRounds: this.state.totalRounds,
           profileId: this.profile.id,
           currentRound: this.state.currentRound,
@@ -561,6 +580,25 @@ export class SessionController {
         console.log('App backgrounded - stopping JS timers');
         this.stopTimer();
         this.stopOngoingNotification();
+        if (this.state) {
+          const stateToSave = { ...this.state }; // Create a copy to modify
+          if (stateToSave.isActive && !this.useNativeService) {
+            // On web: do NOT persist isActive: false when backgrounded (e.g. tab blur/refresh).
+            // Keep session resumable so that after a page refresh we can resume from storage.
+            // Only update elapsed time so the snapshot is accurate when we resume.
+            const now = Date.now();
+            stateToSave.elapsedTime = Math.floor((now - stateToSave.startTime) / 1000);
+            await StorageService.saveSessionState(stateToSave);
+          } else if (stateToSave.isActive && this.useNativeService) {
+            // For Android, if active, keep isActive true, trust native service
+            console.log('Native service session backgrounded: isActive remains true');
+            await StorageService.saveSessionState(stateToSave);
+          } else {
+            // If already inactive or paused, save as is.
+            console.log('Session already inactive/paused, saving as is.');
+            await StorageService.saveSessionState(stateToSave);
+          }
+        }
       }
     });
   }
@@ -604,11 +642,30 @@ export class SessionController {
           this.emit({ type: 'phaseEnd', state: this.state });
         }
       } else if (this.state && this.state.isActive) {
-        // JS thought it was active but native says no - sync to inactive
-        console.warn('Native session not active, stopping JS session');
-        this.state.isActive = false;
-        this.stopTimer();
-        this.stopOngoingNotification();
+        // Native says not active (e.g. process was killed) but we have an active session.
+        // Session must ONLY end when the user explicitly ends it - never on app close/background.
+        // Keep the session and restart the native service so the timer continues.
+        console.log('Native session not active but we have active session - restarting native service');
+        await StorageService.saveSessionState(this.state);
+        if (!this.profile) {
+          const profiles = await StorageService.getProfiles();
+          this.profile = profiles.find(p => p.id === this.state!.profileId) || null;
+        }
+        if (this.profile) {
+          await PomodoroService.startSession({
+            workDurationMin: this.profile.workDuration / 60,
+            breakDurationMin: this.profile.breakDuration / 60,
+            totalRounds: this.state!.totalRounds,
+            profileId: this.profile.id,
+            currentRound: this.state!.currentRound,
+            isWorkPhase: this.state!.isWorkPhase,
+            phaseStartTimeMillis: this.state!.startTime,
+            phaseDurationSec: this.state!.phaseDuration,
+            activityTag: this.state!.currentActivityTag,
+          }).catch(() => {});
+        }
+        this.startTimer();
+        this.startOngoingNotification();
         this.emit({ type: 'stateChange', state: this.state });
       }
     } catch (e) {
@@ -629,6 +686,9 @@ export class SessionController {
     if (!this.state || !this.profile || this.isHandlingPhaseEnd) return;
     this.isHandlingPhaseEnd = true;
 
+    let shouldEmitPhaseEndForLogging = false;
+    let stateToEmitForLogging: SessionState | null = null;
+
     try {
       // Vibrate to signal phase end (only if not handled by native service)
       if (!this.useNativeService) {
@@ -643,56 +703,66 @@ export class SessionController {
         this.state.currentActivityTag
       );
 
-      // Emit phase end event BEFORE updating state (UI will handle showing log dialog)
-      // This ensures the logging modal receives the correct completed round number
-      this.emit({ type: 'phaseEnd', state: this.state });
-
-      // Move to next phase
+      // --- Logic to handle phase transition and determine when to log a full round ---
       if (this.state.isWorkPhase) {
         // Work phase ended
+        this.lastCompletedWorkPhaseState = { ...this.state }; // Capture current state for logging later
+
         if (this.profile.breakDuration === 0) {
-          // No break, move directly to next round
+          // No break: Round is complete, log the work phase immediately
+          shouldEmitPhaseEndForLogging = true;
+          stateToEmitForLogging = this.lastCompletedWorkPhaseState;
+
+          // Transition to next round or end session
           if (this.state.currentRound >= this.state.totalRounds) {
-            // Session complete
             this.emit({ type: 'sessionEnd', state: this.state });
             await this.stopSession();
             return;
           } else {
-            // Start next round immediately
             this.state.currentRound++;
             this.state.isWorkPhase = true;
-            this.state.phaseDuration = this.profile.workDuration * 60;
+            this.state.phaseDuration = this.profile.workDuration; // Now in seconds
             this.state.elapsedTime = 0;
             this.state.startTime = Date.now();
           }
         } else {
-          // Start break phase
+          // Break phase starts
           this.state.isWorkPhase = false;
-          this.state.phaseDuration = this.profile.breakDuration * 60;
+          this.state.phaseDuration = this.profile.breakDuration; // Now in seconds
           this.state.elapsedTime = 0;
           this.state.startTime = Date.now();
         }
       } else {
-        // Break phase ended, move to next round or end session
+        // Break phase ended: Round is fully complete, log the previously captured work phase
+        shouldEmitPhaseEndForLogging = true;
+        stateToEmitForLogging = this.lastCompletedWorkPhaseState;
+        this.lastCompletedWorkPhaseState = null; // Clear after use
+
+        // Transition to next round or end session
         if (this.state.currentRound >= this.state.totalRounds) {
-          // Session complete
           this.emit({ type: 'sessionEnd', state: this.state });
           await this.stopSession();
           return;
         } else {
-          // Start next round
           this.state.currentRound++;
           this.state.isWorkPhase = true;
-          this.state.phaseDuration = this.profile.workDuration * 60;
+          this.state.phaseDuration = this.profile.workDuration; // Now in seconds
           this.state.elapsedTime = 0;
           this.state.startTime = Date.now();
         }
       }
+      // --- End of phase transition logic ---
 
       await StorageService.saveSessionState(this.state);
       this.emit({ type: 'stateChange', state: this.state });
       this.stopOngoingNotification();
       this.startOngoingNotification();
+
+      // Emit phaseEnd event ONLY when a full round is complete and logging is due
+      if (shouldEmitPhaseEndForLogging && stateToEmitForLogging) {
+          this.emit({ type: 'phaseEnd', state: stateToEmitForLogging });
+      }
+
     } finally {
       this.isHandlingPhaseEnd = false;
     }

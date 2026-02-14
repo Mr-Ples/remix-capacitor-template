@@ -1,8 +1,21 @@
 import { useState, useEffect } from 'react';
 import type { Profile, Question } from '../types/pomodoro';
 import { StorageService } from '../services/storage';
+import { DurationPicker } from './DurationPicker';
 
 const TAG_COLORS = ['#f87171', '#fb923c', '#fbbf24', '#4ade80', '#22d3ee', '#818cf8', '#c084fc', '#f472b6'];
+
+// Helper functions for time conversion
+function secondsToHms(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return { hours, minutes, seconds };
+}
+
+function hmsToSeconds(hours: number, minutes: number, seconds: number) {
+  return (hours * 3600) + (minutes * 60) + seconds;
+}
 
 interface ProfileManagerProps {
   currentProfile: Profile;
@@ -36,8 +49,17 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
       id: Date.now().toString(),
       name: 'New Profile',
       rounds: 16,
-      workDuration: 50,
-      breakDuration: 10,
+      workDuration: 50 * 60, // Default 50 minutes in seconds
+      breakDuration: 10 * 60, // Default 10 minutes in seconds
+
+      workDurationHrs: 0,
+      workDurationMins: 50,
+      workDurationSecs: 0,
+
+      breakDurationHrs: 0,
+      breakDurationMins: 10,
+      breakDurationSecs: 0,
+
       useEndTime: false,
       endTime: '23:00',
       activityTags: [],
@@ -59,32 +81,56 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
   };
 
   const handleEditProfile = (profile: Profile) => {
-    setEditingProfile({ ...profile });
+    const workHms = secondsToHms(profile.workDuration);
+    const breakHms = secondsToHms(profile.breakDuration);
+    setEditingProfile({
+      ...profile,
+      workDurationHrs: workHms.hours,
+      workDurationMins: workHms.minutes,
+      workDurationSecs: workHms.seconds,
+      breakDurationHrs: breakHms.hours,
+      breakDurationMins: breakHms.minutes,
+      breakDurationSecs: breakHms.seconds,
+    });
     setIsEditing(true);
   };
 
   const handleSaveProfile = async () => {
     if (!editingProfile) return;
 
-    editingProfile.updatedAt = new Date().toISOString();
+    // Convert HMS back to total seconds before saving
+    const updatedProfile: Profile = {
+      ...editingProfile,
+      workDuration: hmsToSeconds(
+        editingProfile.workDurationHrs,
+        editingProfile.workDurationMins,
+        editingProfile.workDurationSecs
+      ),
+      breakDuration: hmsToSeconds(
+        editingProfile.breakDurationHrs,
+        editingProfile.breakDurationMins,
+        editingProfile.breakDurationSecs
+      ),
+      updatedAt: new Date().toISOString(),
+    };
 
-    const existingIndex = profiles.findIndex(p => p.id === editingProfile.id);
+    const existingIndex = profiles.findIndex(p => p.id === updatedProfile.id);
     if (existingIndex >= 0) {
-      await StorageService.updateProfile(editingProfile);
+      await StorageService.updateProfile(updatedProfile);
     } else {
-      await StorageService.addProfile(editingProfile);
+      await StorageService.addProfile(updatedProfile);
     }
 
     await loadProfiles();
 
     if (existingIndex === -1) {
-      await StorageService.setActiveProfileId(editingProfile.id);
-      onProfileChange(editingProfile);
+      await StorageService.setActiveProfileId(updatedProfile.id);
+      onProfileChange(updatedProfile);
     }
 
-    if (editingProfile.id === currentProfile.id) {
-      onProfileChange(editingProfile);
-      await StorageService.setActiveProfileId(editingProfile.id);
+    if (updatedProfile.id === currentProfile.id) {
+      onProfileChange(updatedProfile);
+      await StorageService.setActiveProfileId(updatedProfile.id);
     }
 
     setIsEditing(false);
@@ -249,7 +295,7 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Rounds</label>
               <input
@@ -267,38 +313,55 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
                 disabled={!!editingProfile.useEndTime}
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Work (m)</label>
-              <input
-                type="number"
-                className="input-field w-full"
-                min="1"
-                max="120"
-                value={editingProfile.workDuration}
-                onChange={(e) =>
-                  setEditingProfile({
-                    ...editingProfile,
-                    workDuration: parseInt(e.target.value) || 1,
-                  })
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Break (m)</label>
-              <input
-                type="number"
-                className="input-field w-full"
-                min="0"
-                max="960"
-                value={editingProfile.breakDuration}
-                onChange={(e) =>
-                  setEditingProfile({
-                    ...editingProfile,
-                    breakDuration: parseInt(e.target.value) || 0,
-                  })
-                }
-              />
-            </div>
+
+            <DurationPicker
+              label="Work Duration"
+              value={editingProfile.workDuration}
+              onChange={(seconds) => {
+                const hrs = Math.floor(seconds / 3600);
+                const mins = Math.floor((seconds % 3600) / 60);
+                const secs = seconds % 60;
+                setEditingProfile({
+                  ...editingProfile,
+                  workDuration: seconds,
+                  workDurationHrs: hrs,
+                  workDurationMins: mins,
+                  workDurationSecs: secs,
+                });
+              }}
+              presets={[
+                { label: '30 sec', seconds: 30 },
+                { label: '1 min', seconds: 1 * 60 },
+                { label: '10 min', seconds: 10 * 60 },
+                { label: '30 min', seconds: 30 * 60 },
+                { label: '50 min', seconds: 50 * 60 },
+                { label: '1h 30min', seconds: 90 * 60 },
+              ]}
+            />
+
+            <DurationPicker
+              label="Break Duration"
+              value={editingProfile.breakDuration}
+              onChange={(seconds) => {
+                const hrs = Math.floor(seconds / 3600);
+                const mins = Math.floor((seconds % 3600) / 60);
+                const secs = seconds % 60;
+                setEditingProfile({
+                  ...editingProfile,
+                  breakDuration: seconds,
+                  breakDurationHrs: hrs,
+                  breakDurationMins: mins,
+                  breakDurationSecs: secs,
+                });
+              }}
+              presets={[
+                { label: '30 sec', seconds: 30 },
+                { label: '1 min', seconds: 1 * 60 },
+                { label: '5 min', seconds: 5 * 60 },
+                { label: '10 min', seconds: 10 * 60 },
+                { label: '30 min', seconds: 30 * 60 },
+              ]}
+            />
           </div>
 
           <div className="flex items-center gap-4 p-4 rounded-lg bg-white/5 border border-white/5">
@@ -516,7 +579,19 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
           <p className="text-sm text-mutedForeground">
             {currentProfile.useEndTime && currentProfile.endTime
               ? `Working until ${currentProfile.endTime}`
-              : `${currentProfile.rounds} rounds of ${currentProfile.workDuration}/${currentProfile.breakDuration}m`}
+              : (() => {
+                  const formatDurationCompact = (seconds: number): string => {
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    const secs = seconds % 60;
+                    if (hours > 0) {
+                      return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+                    } else {
+                      return `${minutes}:${String(secs).padStart(2, '0')}`;
+                    }
+                  };
+                  return `${currentProfile.rounds} rounds of ${formatDurationCompact(currentProfile.workDuration)}/${formatDurationCompact(currentProfile.breakDuration)}`;
+                })()}
           </p>
         </div>
       </div>
