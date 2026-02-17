@@ -105,6 +105,16 @@ export interface SessionSummary {
   logs: SessionLog[];
 }
 
+/** A tag that can be assigned to notes or tasks. */
+export interface Tag {
+  id: string;
+  profileId: string;
+  name: string;
+  color: string; // CSS color string (e.g., "#FF5733" or "rgb(255, 87, 51)")
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A note or task attached to an activity (per profile). */
 export interface ActivityItem {
   id: string;
@@ -113,6 +123,8 @@ export interface ActivityItem {
   type: 'note' | 'task';
   content: string;
   completed?: boolean; // only for type 'task'
+  /** Array of tag IDs assigned to this item */
+  tagIds?: string[];
   createdAt: string;
   updatedAt: string;
 }

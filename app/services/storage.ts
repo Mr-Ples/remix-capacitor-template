@@ -1,5 +1,5 @@
 import { Preferences } from '@capacitor/preferences';
-import type { Profile, SessionState, SessionLog, SessionSummary, SuspendedRound, ActivityItem } from '../types/pomodoro';
+import type { Profile, SessionState, SessionLog, SessionSummary, SuspendedRound, ActivityItem, Tag } from '../types/pomodoro';
 import { DEFAULT_PROFILE } from '../types/pomodoro';
 
 const STORAGE_KEYS = {
@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
   SESSION_SUMMARIES: 'pomodoro_session_summaries',
   SUSPENDED_ROUNDS: 'pomodoro_suspended_rounds',
   ACTIVITY_ITEMS: 'pomodoro_activity_items',
+  TAGS: 'pomodoro_tags',
 };
 
 export class StorageService {
@@ -391,6 +392,92 @@ export class StorageService {
       await Preferences.set({ key: STORAGE_KEYS.ACTIVITY_ITEMS, value: JSON.stringify(filtered) });
     } catch (error) {
       console.error('Error deleting activity item:', error);
+    }
+  }
+
+  // Tags management
+  private static async getAllTags(): Promise<Tag[]> {
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEYS.TAGS });
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting all tags:', error);
+      return [];
+    }
+  }
+
+  static async getTagsForProfile(profileId: string): Promise<Tag[]> {
+    try {
+      const all = await this.getAllTags();
+      return all
+        .filter((tag) => tag.profileId === profileId)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (error) {
+      console.error('Error getting tags for profile:', error);
+      return [];
+    }
+  }
+
+  static async addTag(tag: Omit<Tag, 'id' | 'createdAt' | 'updatedAt'>): Promise<Tag> {
+    const now = new Date().toISOString();
+    const full: Tag = {
+      ...tag,
+      id: Date.now().toString(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    try {
+      const all = await this.getAllTags();
+      all.push(full);
+      await Preferences.set({ key: STORAGE_KEYS.TAGS, value: JSON.stringify(all) });
+      return full;
+    } catch (error) {
+      console.error('Error adding tag:', error);
+      throw error;
+    }
+  }
+
+  static async updateTag(updated: Tag): Promise<void> {
+    try {
+      const all = await this.getAllTags();
+      const index = all.findIndex((tag) => tag.id === updated.id);
+      if (index !== -1) {
+        all[index] = { ...updated, updatedAt: new Date().toISOString() };
+        await Preferences.set({ key: STORAGE_KEYS.TAGS, value: JSON.stringify(all) });
+      }
+    } catch (error) {
+      console.error('Error updating tag:', error);
+    }
+  }
+
+  static async deleteTag(id: string): Promise<void> {
+    try {
+      // First, remove the tag from all activity items that have it
+      const allItems = await this.getAllActivityItems();
+      const updatedItems = allItems.map((item) => {
+        if (item.tagIds && item.tagIds.includes(id)) {
+          return { ...item, tagIds: item.tagIds.filter((tagId) => tagId !== id) };
+        }
+        return item;
+      });
+      await Preferences.set({ key: STORAGE_KEYS.ACTIVITY_ITEMS, value: JSON.stringify(updatedItems) });
+
+      // Then delete the tag
+      const all = await this.getAllTags();
+      const filtered = all.filter((tag) => tag.id !== id);
+      await Preferences.set({ key: STORAGE_KEYS.TAGS, value: JSON.stringify(filtered) });
+    } catch (error) {
+      console.error('Error deleting tag:', error);
+    }
+  }
+
+  static async getTagById(id: string): Promise<Tag | null> {
+    try {
+      const all = await this.getAllTags();
+      return all.find((tag) => tag.id === id) || null;
+    } catch (error) {
+      console.error('Error getting tag by id:', error);
+      return null;
     }
   }
 }
