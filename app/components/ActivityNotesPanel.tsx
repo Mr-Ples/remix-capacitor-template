@@ -8,18 +8,26 @@ interface ActivityNotesPanelProps {
   tagColor?: string;
   /** When true, only render the form + list (no card/header). For use inside a modal. */
   embedded?: boolean;
+  /** When true, show all items for the profile regardless of activity tag. */
+  showAllItems?: boolean;
 }
 
-export function ActivityNotesPanel({ profileId, activityTag, tagColor, embedded }: ActivityNotesPanelProps) {
+export function ActivityNotesPanel({ profileId, activityTag, tagColor, embedded, showAllItems }: ActivityNotesPanelProps) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [newContent, setNewContent] = useState('');
   const [newType, setNewType] = useState<'note' | 'task'>('task');
   const [expanded, setExpanded] = useState(true);
 
   const loadItems = useCallback(async () => {
-    const list = await StorageService.getActivityItems(profileId, activityTag);
+    let list: ActivityItem[];
+    if (showAllItems) {
+      // When showAllItems is true, get all items for the profile (regardless of activity tag)
+      list = await StorageService.getAllActivityItemsForProfile(profileId);
+    } else {
+      list = await StorageService.getActivityItems(profileId, activityTag);
+    }
     setItems(list);
-  }, [profileId, activityTag]);
+  }, [profileId, activityTag, showAllItems]);
 
   useEffect(() => {
     loadItems();

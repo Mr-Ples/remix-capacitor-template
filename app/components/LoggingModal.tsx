@@ -94,23 +94,58 @@ export function LoggingModal({
             {relevantQuestions.map((question) => (
               <div key={question.id} className="space-y-3">
                 <label className="text-sm font-medium px-1">{question.text}</label>
-                <div className="grid grid-cols-1 gap-2">
-                  {question.options.map((option) => (
-                    <button
-                      key={option}
-                      className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200 ${answers[question.id] === option
-                        ? 'border-accent bg-accent/10 text-accent'
-                        : 'border-white/5 bg-white/5 text-mutedForeground hover:bg-white/10'
-                        }`}
-                      onClick={() => setAnswers({ ...answers, [question.id]: option })}
-                    >
-                      <span className="text-sm">{option}</span>
-                      {answers[question.id] === option && (
-                        <div className="w-2 h-2 rounded-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
-                      )}
-                    </button>
-                  ))}
-                </div>
+                {question.useScale ? (
+                  // 1-10 Scale rendering
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-mutedForeground">1</span>
+                      <span className="text-lg font-bold text-accent">{answers[question.id] || '-'}</span>
+                      <span className="text-xs text-mutedForeground">10</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={answers[question.id] || 5}
+                      onChange={(e) => setAnswers({ ...answers, [question.id]: e.target.value })}
+                      className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-accent"
+                    />
+                    <div className="flex justify-center gap-1 mt-2">
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                        <button
+                          key={num}
+                          className={`w-7 h-7 rounded-full text-xs font-medium transition-all ${
+                            answers[question.id] === String(num)
+                              ? 'bg-accent text-accentForeground shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                              : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                          }`}
+                          onClick={() => setAnswers({ ...answers, [question.id]: String(num) })}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  // Regular options rendering
+                  <div className="grid grid-cols-1 gap-2">
+                    {question.options.map((option) => (
+                      <button
+                        key={option}
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200 ${answers[question.id] === option
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-white/5 bg-white/5 text-mutedForeground hover:bg-white/10'
+                          }`}
+                        onClick={() => setAnswers({ ...answers, [question.id]: option })}
+                      >
+                        <span className="text-sm">{option}</span>
+                        {answers[question.id] === option && (
+                          <div className="w-2 h-2 rounded-full bg-accent shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

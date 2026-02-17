@@ -53,6 +53,8 @@ export interface Question {
   text: string;
   type: 'work' | 'break' | 'both'; // When to show the question
   options: string[]; // Multiple choice options
+  /** When true, use a 1-10 numeric scale instead of text options */
+  useScale?: boolean;
 }
 
 export interface SessionState {

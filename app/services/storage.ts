@@ -330,6 +330,23 @@ export class StorageService {
     }
   }
 
+  /**
+   * Get all activity items for a profile, regardless of activity tag.
+   * Used when no specific activity is selected (e.g., at session start or after app restart).
+   */
+  static async getAllActivityItemsForProfile(profileId: string): Promise<ActivityItem[]> {
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEYS.ACTIVITY_ITEMS });
+      if (!value) return [];
+      const all: ActivityItem[] = JSON.parse(value);
+      const filtered = all.filter((item) => item.profileId === profileId);
+      return filtered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    } catch (error) {
+      console.error('Error getting all activity items for profile:', error);
+      return [];
+    }
+  }
+
   static async addActivityItem(item: Omit<ActivityItem, 'createdAt' | 'updatedAt'>): Promise<ActivityItem> {
     const now = new Date().toISOString();
     const full: ActivityItem = {

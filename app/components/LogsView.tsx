@@ -291,23 +291,40 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                       {relevantQuestions.map(q => (
                         <div key={q.id} className="space-y-1">
                           <p className="text-[11px] font-medium text-foreground/90">{q.text}</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {q.options.map(opt => (
-                              <button
-                                key={opt}
-                                className={`px-2 py-1 rounded text-[9px] transition-all ${newEntryData.answers[q.id] === opt
-                                  ? 'bg-accent text-accentForeground font-bold'
-                                  : 'bg-white/5 text-mutedForeground hover:bg-white/10'
-                                  }`}
-                                onClick={() => setNewEntryData({
+                          {q.useScale ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="range"
+                                min="1"
+                                max="10"
+                                value={newEntryData.answers[q.id] || 5}
+                                onChange={(e) => setNewEntryData({
                                   ...newEntryData,
-                                  answers: { ...newEntryData.answers, [q.id]: opt }
+                                  answers: { ...newEntryData.answers, [q.id]: e.target.value }
                                 })}
-                              >
-                                {opt}
-                              </button>
-                            ))}
-                          </div>
+                                className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-accent"
+                              />
+                              <span className="text-xs font-bold text-accent w-5 text-center">{newEntryData.answers[q.id] || '-'}</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {q.options.map(opt => (
+                                <button
+                                  key={opt}
+                                  className={`px-2 py-1 rounded text-[9px] transition-all ${newEntryData.answers[q.id] === opt
+                                    ? 'bg-accent text-accentForeground font-bold'
+                                    : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                                    }`}
+                                  onClick={() => setNewEntryData({
+                                    ...newEntryData,
+                                    answers: { ...newEntryData.answers, [q.id]: opt }
+                                  })}
+                                >
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -436,20 +453,34 @@ export function LogsView({ isOpen, onClose, onDataChange, defaultProfileId }: Lo
                                               .map(q => (
                                                 <div key={q.id} className="space-y-2">
                                                   <p className="text-xs font-medium text-foreground/90">{q.text}</p>
-                                                  <div className="flex flex-wrap gap-2">
-                                                    {q.options.map(opt => (
-                                                      <button
-                                                        key={opt}
-                                                        className={`px-3 py-1.5 rounded-lg text-[10px] transition-all ${editFormData.answers[q.id] === opt
-                                                          ? 'bg-accent text-accentForeground font-bold shadow-glow-sm'
-                                                          : 'bg-white/5 text-mutedForeground hover:bg-white/10'
-                                                          }`}
-                                                        onClick={() => handleUpdateAnswer(q.id, opt)}
-                                                      >
-                                                        {opt}
-                                                      </button>
-                                                    ))}
-                                                  </div>
+                                                  {q.useScale ? (
+                                                    <div className="flex items-center gap-2">
+                                                      <input
+                                                        type="range"
+                                                        min="1"
+                                                        max="10"
+                                                        value={editFormData.answers[q.id] || 5}
+                                                        onChange={(e) => handleUpdateAnswer(q.id, e.target.value)}
+                                                        className="flex-1 h-2 bg-white/10 rounded appearance-none cursor-pointer accent-accent"
+                                                      />
+                                                      <span className="text-sm font-bold text-accent w-6 text-center">{editFormData.answers[q.id] || '-'}</span>
+                                                    </div>
+                                                  ) : (
+                                                    <div className="flex flex-wrap gap-2">
+                                                      {q.options.map(opt => (
+                                                        <button
+                                                          key={opt}
+                                                          className={`px-3 py-1.5 rounded-lg text-[10px] transition-all ${editFormData.answers[q.id] === opt
+                                                            ? 'bg-accent text-accentForeground font-bold shadow-glow-sm'
+                                                            : 'bg-white/5 text-mutedForeground hover:bg-white/10'
+                                                            }`}
+                                                          onClick={() => handleUpdateAnswer(q.id, opt)}
+                                                        >
+                                                          {opt}
+                                                        </button>
+                                                      ))}
+                                                    </div>
+                                                  )}
                                                 </div>
                                               ))}
                                           </div>

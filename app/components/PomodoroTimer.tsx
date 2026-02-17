@@ -1137,6 +1137,7 @@ export function PomodoroTimer() {
           profileId={profile.id}
           activityTag={sessionState?.currentActivityTag ?? selectedActivityTag ?? 'Uncategorized'}
           tagColor={profile.tagColors?.[sessionState?.currentActivityTag ?? selectedActivityTag ?? '']}
+          showAllItems={!sessionState && !selectedActivityTag}
         />
       )}
     </div>

@@ -507,42 +507,60 @@ export function ProfileManager({ currentProfile, onProfileChange }: ProfileManag
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Follow-up Questions</label>
-              <button className="btn-secondary py-1.5 px-3 text-xs" onClick={addQuestion}>+ Add Question</button>
-            </div>
-            <div className="space-y-6">
-              {editingProfile.questions.map((question, qIndex) => (
-                <div key={question.id} className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-4">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      className="input-field flex-1 h-10"
-                      value={question.text}
-                      onChange={(e) => updateQuestion(qIndex, 'text', e.target.value)}
-                      placeholder="Question text"
-                    />
-                    <button className="text-mutedForeground hover:text-red-400 p-2" onClick={() => deleteQuestion(qIndex)}>×</button>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-medium uppercase tracking-widest text-mutedForeground px-1">Follow-up Questions</label>
+                      <button className="btn-secondary py-1.5 px-3 text-xs" onClick={addQuestion}>+ Add Question</button>
+                    </div>
+                    <div className="space-y-6">
+                      {editingProfile.questions.map((question, qIndex) => (
+                        <div key={question.id} className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-4">
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              className="input-field flex-1 h-10"
+                              value={question.text}
+                              onChange={(e) => updateQuestion(qIndex, 'text', e.target.value)}
+                              placeholder="Question text"
+                            />
+                            <button className="text-mutedForeground hover:text-red-400 p-2" onClick={() => deleteQuestion(qIndex)}>×</button>
+                          </div>
+                          
+                          {/* Use Scale Toggle */}
+                          <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
+                            <div className="flex-1 space-y-1">
+                              <p className="text-sm font-medium">Use 1-10 Scale</p>
+                              <p className="text-xs text-mutedForeground">Show numeric slider instead of options</p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              className="w-5 h-5 accent-accent"
+                              checked={!!question.useScale}
+                              onChange={(e) => updateQuestion(qIndex, 'useScale', e.target.checked)}
+                            />
+                          </div>
+
+                          {/* Options (only shown when not using scale) */}
+                          {!question.useScale && (
+                            <div className="space-y-2 pl-4 border-l-2 border-white/5">
+                              {question.options.map((option, oIndex) => (
+                                <div key={oIndex} className="flex gap-2 items-center">
+                                  <input
+                                    type="text"
+                                    className="input-field flex-1 h-9 text-sm"
+                                    value={option}
+                                    onChange={(e) => updateQuestionOption(qIndex, oIndex, e.target.value)}
+                                  />
+                                  <button className="text-mutedForeground hover:text-red-400 px-2" onClick={() => deleteQuestionOption(qIndex, oIndex)}>×</button>
+                                </div>
+                              ))}
+                              <button className="text-xs text-accent hover:underline pt-1" onClick={() => addQuestionOption(qIndex)}>+ Add option</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="space-y-2 pl-4 border-l-2 border-white/5">
-                    {question.options.map((option, oIndex) => (
-                      <div key={oIndex} className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          className="input-field flex-1 h-9 text-sm"
-                          value={option}
-                          onChange={(e) => updateQuestionOption(qIndex, oIndex, e.target.value)}
-                        />
-                        <button className="text-mutedForeground hover:text-red-400 px-2" onClick={() => deleteQuestionOption(qIndex, oIndex)}>×</button>
-                      </div>
-                    ))}
-                    <button className="text-xs text-accent hover:underline pt-1" onClick={() => addQuestionOption(qIndex)}>+ Add option</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
         <div className="flex gap-3 pt-4 border-t border-white/5">

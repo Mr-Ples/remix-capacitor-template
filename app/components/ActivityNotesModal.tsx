@@ -6,6 +6,8 @@ interface ActivityNotesModalProps {
   profileId: string;
   activityTag: string;
   tagColor?: string;
+  /** When true, show all items for the profile regardless of activity tag. */
+  showAllItems?: boolean;
 }
 
 export function ActivityNotesModal({
@@ -14,6 +16,7 @@ export function ActivityNotesModal({
   profileId,
   activityTag,
   tagColor,
+  showAllItems,
 }: ActivityNotesModalProps) {
   if (!isOpen) return null;
 
@@ -23,13 +26,13 @@ export function ActivityNotesModal({
         <div className="p-4 sm:p-6 space-y-4 flex flex-col flex-1 min-h-0">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-lg font-display font-bold flex items-center gap-2">
-              {tagColor && (
+              {tagColor && !showAllItems && (
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: tagColor }}
                 />
               )}
-              Notes & tasks — {activityTag}
+              {showAllItems ? 'All notes & tasks' : `Notes & tasks — ${activityTag}`}
             </h2>
             <button
               type="button"
@@ -44,6 +47,7 @@ export function ActivityNotesModal({
             activityTag={activityTag}
             tagColor={tagColor}
             embedded
+            showAllItems={showAllItems}
           />
         </div>
       </div>
