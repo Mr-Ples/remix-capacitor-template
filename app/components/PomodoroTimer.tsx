@@ -429,9 +429,114 @@ export function PomodoroTimer() {
     return ((sessionState.phaseDuration - timeRemaining) / sessionState.phaseDuration) * 100;
   };
 
+  // Helper function to get total rounds (moved before early return for useMemo compatibility)
+  const getReferenceTotalRounds = (): number => {
+    if (sessionState) return sessionState.totalRounds;
+    if (!profile) return 0;
+
+    if (profile.useEndTime && profile.endTime) {
+      const now = new Date();
+      const nowSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+
+      const [endHourStr, endMinStr] = profile.endTime.split(':');
+      const endHour = parseInt(endHourStr || '0', 10);
+      const endMinute = parseInt(endMinStr || '0', 10);
+      const endSeconds = endHour * 3600 + endMinute * 60;
+
+      // Handle end time that goes into the next day (e.g., now is 23:00, end time is 02:00)
+      let secondsUntilEnd = endSeconds - nowSeconds;
+      if (secondsUntilEnd <= 0) {
+        // End time is tomorrow (add 24 hours worth of seconds)
+        secondsUntilEnd += 24 * 3600;
+      }
+
+      const roundLengthSeconds = profile.workDuration + profile.breakDuration;
+
+      if (secondsUntilEnd > 0 && roundLengthSeconds > 0) {
+        return Math.ceil(secondsUntilEnd / roundLengthSeconds);
+      }
+      return 0;
+    }
+
+    return profile.rounds;
+  };
+
+  // Resolve all percentage-based goals together using largest-remainder method
+  const resolveAllGoalTargets = useMemo((): Record<string, number> => {
+    const goals = profile?.goals || {};
+    const total = getReferenceTotalRounds();
+    
+    // If no goals defined, return empty
+    if (!goals || Object.keys(goals).length === 0) {
+      return {};
+    }
+
+    // If total rounds is 0 or negative (e.g., end time has passed), can't resolve percentages
+    if (total <= 0) {
+      // Still resolve fixed number goals
+      const result: Record<string, number> = {};
+      for (const [tag, goal] of Object.entries(goals)) {
+        if (goal === undefined || goal === '') {
+          result[tag] = 0;
+        } else if (typeof goal === 'number') {
+          result[tag] = goal;
+        } else if (typeof goal === 'string' && !goal.endsWith('%')) {
+          const parsed = parseInt(goal);
+          result[tag] = isNaN(parsed) ? 0 : parsed;
+        } else {
+          result[tag] = 0;
+        }
+      }
+      return result;
+    }
+    
+    const result: Record<string, number> = {};
+
+    const percentageEntries: { tag: string; percentage: number; exact: number; floor: number; remainder: number }[] = [];
+
+    for (const [tag, goal] of Object.entries(goals)) {
+      if (goal === undefined || goal === '') {
+        result[tag] = 0;
+      } else if (typeof goal === 'number') {
+        result[tag] = goal;
+      } else if (typeof goal === 'string' && goal.endsWith('%')) {
+        const pct = parseInt(goal.replace('%', ''));
+        if (!isNaN(pct) && pct > 0) {
+          const exact = (pct / 100) * total;
+          const floor = Math.floor(exact);
+          percentageEntries.push({ tag, percentage: pct, exact, floor, remainder: exact - floor });
+        } else {
+          result[tag] = 0;
+        }
+      } else {
+        const parsed = parseInt(goal);
+        result[tag] = isNaN(parsed) ? 0 : parsed;
+      }
+    }
+
+    if (percentageEntries.length === 0) return result;
+
+    const floorSum = percentageEntries.reduce((sum, e) => sum + e.floor, 0);
+    const totalPercentageRounds = Math.round(percentageEntries.reduce((sum, e) => sum + e.exact, 0));
+    let remaining = totalPercentageRounds - floorSum;
+
+    const sorted = [...percentageEntries].sort((a, b) => b.remainder - a.remainder);
+    for (const entry of sorted) {
+      if (remaining > 0) {
+        result[entry.tag] = Math.max(1, entry.floor + 1);
+        remaining--;
+      } else {
+        result[entry.tag] = Math.max(1, entry.floor);
+      }
+    }
+
+    return result;
+  }, [profile?.goals, profile?.rounds, profile?.useEndTime, profile?.endTime, profile?.workDuration, profile?.breakDuration, sessionState?.totalRounds]);
+
   if (!profile) {
     return <div className="container text-center">Loading...</div>;
   }
+  
   const getCompletedRoundsForTag = (tag: string | undefined): number => {
     if (!tag) return 0;
     // Filter by effective session (current when active, else most recent for profile)
@@ -454,41 +559,21 @@ export function PomodoroTimer() {
     }).length;
   };
 
-  const getReferenceTotalRounds = (): number => {
-    if (sessionState) return sessionState.totalRounds;
-    if (!profile) return 0;
-
-    if (profile.useEndTime && profile.endTime) {
-      const now = new Date();
-      const nowSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-
-      const [endHourStr, endMinStr] = profile.endTime.split(':');
-      const endHour = parseInt(endHourStr || '0', 10);
-      const endMinute = parseInt(endMinStr || '0', 10);
-      const endSeconds = endHour * 3600 + endMinute * 60;
-
-      const secondsUntilEnd = endSeconds - nowSeconds;
-      const roundLengthSeconds = profile.workDuration + profile.breakDuration;
-
-      if (secondsUntilEnd > 0 && roundLengthSeconds > 0) {
-        return Math.ceil(secondsUntilEnd / roundLengthSeconds);
-      }
-      return 0;
+  const resolveGoalTarget = (goal: number | string | undefined, tag?: string): number => {
+    // If a tag is provided and we have a pre-resolved value, use it
+    if (tag && resolveAllGoalTargets[tag] !== undefined) {
+      return resolveAllGoalTargets[tag];
     }
 
-    return profile.rounds;
-  };
-
-  const resolveGoalTarget = (goal: number | string | undefined): number => {
+    // Fallback for calls without a tag (shouldn't happen in practice)
     if (goal === undefined || goal === '') return 0;
     if (typeof goal === 'number') return goal;
 
-    // Handle percentage string "50%"
     if (typeof goal === 'string' && goal.endsWith('%')) {
       const percentage = parseInt(goal.replace('%', ''));
       if (!isNaN(percentage)) {
         const total = getReferenceTotalRounds();
-        return Math.max(1, Math.ceil((percentage / 100) * total));
+        return Math.max(1, Math.round((percentage / 100) * total));
       }
     }
 
@@ -512,7 +597,7 @@ export function PomodoroTimer() {
 
     const completed = getCompletedRoundsForTag(tag);
     // Resolve target (handles numbers and "50%" strings)
-    const targetVal = resolveGoalTarget(profile?.goals?.[tag]);
+    const targetVal = resolveGoalTarget(profile?.goals?.[tag], tag);
 
     if (!targetVal) {
       // If we have a goal set but it resolves to 0 (e.g. invalid string), treat as no goal?
@@ -879,7 +964,7 @@ export function PomodoroTimer() {
               {(profile.activityTags || []).map((tag) => {
                 const rawTarget = profile.goals?.[tag];
                 const completed = getCompletedRoundsForTag(tag);
-                const target = resolveGoalTarget(rawTarget);
+                const target = resolveGoalTarget(rawTarget, tag);
                 const percent = target > 0 ? Math.min(100, (completed / target) * 100) : (completed > 0 ? 100 : 0);
                 const isMet = target > 0 && completed >= target;
                 const tagColor = profile.tagColors?.[tag] || 'var(--accent)';
@@ -914,8 +999,9 @@ export function PomodoroTimer() {
               {(() => {
                 const uncategorized = getUncategorizedRounds();
                 const totalPlanned = getReferenceTotalRounds();
-                const taggedTargetsSum = Object.values(profile.goals || {}).reduce((acc: number, goal) => {
-                  return acc + resolveGoalTarget(goal);
+                // Use pre-computed resolved values from resolveAllGoalTargets
+                const taggedTargetsSum = Object.keys(profile.goals || {}).reduce((acc: number, tag) => {
+                  return acc + resolveAllGoalTargets[tag];
                 }, 0);
 
                 const target = Math.max(0, totalPlanned - taggedTargetsSum);
